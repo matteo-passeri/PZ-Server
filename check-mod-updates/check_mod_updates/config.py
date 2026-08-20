@@ -4,22 +4,12 @@ from datetime import datetime
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 PROJECT_DIR = SCRIPT_DIR.parent
+ROOT_ENV_FILE = PROJECT_DIR / ".env"
+COMPOSE_ENV_FILE = PROJECT_DIR / "docker-compose" / ".env"
+SCRIPT_ENV_FILE = SCRIPT_DIR / ".env"
 
 
-def shared_env_file():
-    candidates = (
-        PROJECT_DIR / ".env",
-        PROJECT_DIR / "docker-compose" / ".env",
-    )
-
-    for path in candidates:
-        if path.is_file():
-            return path
-
-    return candidates[0]
-
-
-ENV_FILE = shared_env_file()
+ENV_FILE = ROOT_ENV_FILE if ROOT_ENV_FILE.is_file() else SCRIPT_ENV_FILE
 
 BASE = None
 STATE_FILE = None
@@ -107,6 +97,15 @@ def read_env(path):
     return result
 
 
+def load_environment():
+    if ROOT_ENV_FILE.is_file():
+        return read_env(ROOT_ENV_FILE)
+
+    env = read_env(COMPOSE_ENV_FILE)
+    env.update(read_env(SCRIPT_ENV_FILE))
+    return env
+
+
 def required_env(env, key):
     value = env.get(key, "").strip()
 
@@ -158,7 +157,7 @@ def load_configuration():
     global PROJECT_NAME
     global MAX_START_ATTEMPTS
 
-    env = read_env(ENV_FILE)
+    env = load_environment()
 
     BASE = configured_path(env, "PZ_SERVER_DIR")
     STATE_FILE = BASE / ".pz-mod-check-state.json"
