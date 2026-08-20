@@ -16,14 +16,7 @@ from typing import Any
 import requests
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_DIR = SCRIPT_DIR.parent
-ROOT_ENV_FILE = PROJECT_DIR / ".env"
-COMPOSE_ENV_FILE = PROJECT_DIR / "docker-compose" / ".env"
-SCRIPT_ENV_FILE = SCRIPT_DIR / ".env"
-
-
-CONFIG_ENV_FILE = ROOT_ENV_FILE if ROOT_ENV_FILE.is_file() else SCRIPT_ENV_FILE
-MANAGED_ENV_FILE = ROOT_ENV_FILE if ROOT_ENV_FILE.is_file() else COMPOSE_ENV_FILE
+CONFIG_ENV_FILE = SCRIPT_DIR / ".env"
 
 APP_ID = None
 DEFAULT_COLLECTION_ID = None
@@ -70,15 +63,6 @@ def read_env(path: Path) -> dict[str, str]:
     return result
 
 
-def load_environment() -> dict[str, str]:
-    if ROOT_ENV_FILE.is_file():
-        return read_env(ROOT_ENV_FILE)
-
-    env = read_env(COMPOSE_ENV_FILE)
-    env.update(read_env(SCRIPT_ENV_FILE))
-    return env
-
-
 def required_env(env: dict[str, str], key: str) -> str:
     value = env.get(key, "").strip()
 
@@ -115,7 +99,7 @@ def load_configuration() -> None:
     global DEFAULT_WORKSHOP_ROOT
     global MOD_ID_OVERRIDES
 
-    env = load_environment()
+    env = read_env(CONFIG_ENV_FILE)
 
     APP_ID = positive_int_env(env, "PZ_APP_ID")
     DEFAULT_COLLECTION_ID = required_env(env, "PZ_DEFAULT_COLLECTION_ID")
@@ -183,7 +167,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("collection_id", nargs="?", default=DEFAULT_COLLECTION_ID)
     p.add_argument("--output-dir", type=Path, default=Path("."))
-    p.add_argument("--env-file", type=Path, default=MANAGED_ENV_FILE)
+    p.add_argument("--env-file", type=Path, default=CONFIG_ENV_FILE)
     p.add_argument("--strict", action="store_true", help="Exit 2 se trova problemi seri")
     p.add_argument("--no-env-update", action="store_true", help="Non modificare .env")
     p.add_argument("--no-backup", action="store_true")
