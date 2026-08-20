@@ -13,31 +13,23 @@ import urllib.request
 from datetime import datetime
 
 
-BASE = Path("/home/matteo/containers/project-zomboid")
-ENV_FILE = BASE / ".env"
+SCRIPT_DIR = Path(__file__).resolve().parent
+ENV_FILE = SCRIPT_DIR / ".env"
 
-STATE_FILE = BASE / ".pz-mod-check-state.json"
-LOCK_FILE = Path("/tmp/pz-mod-check.lock")
-
-COMPOSE = "/usr/bin/podman-compose"
-CONTAINER = "game-project-zomboid"
-
-LOCAL_FIXES = str(
-    BASE / "apply-local-fixes.py"
-)
-
-RCON_PORT = 27015
-RCON_BIN = "/usr/local/bin/rcon"
-
-SERVER_READY_TIMEOUT = 1200
-SERVER_READY_POLL = 15
-
-SERVER_STABILITY_SECONDS = 90
-SERVER_STABILITY_POLL = 15
-
-PROJECT_NAME = "project-zomboid"
-
-MAX_START_ATTEMPTS = 2
+BASE = None
+STATE_FILE = None
+LOCK_FILE = None
+CONTAINER = None
+LOCAL_FIXES = None
+RCON_PORT = None
+RCON_BIN = None
+RCON_PASSWORD = None
+SERVER_READY_TIMEOUT = None
+SERVER_READY_POLL = None
+SERVER_STABILITY_SECONDS = None
+SERVER_STABILITY_POLL = None
+PROJECT_NAME = None
+MAX_START_ATTEMPTS = None
 
 STEAM_DETAILS_URL = (
     "https://api.steampowered.com/"
@@ -108,6 +100,92 @@ def read_env(path):
         result[key.strip()] = value
 
     return result
+
+
+def required_env(env, key):
+    value = env.get(key, "").strip()
+
+    if not value:
+        raise RuntimeError(
+            f"{key} non presente o vuoto in {ENV_FILE}"
+        )
+
+    return value
+
+
+def positive_int_env(env, key):
+    raw = required_env(env, key)
+
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"{key} deve essere un intero positivo: {raw!r}"
+        ) from exc
+
+    if value <= 0:
+        raise RuntimeError(
+            f"{key} deve essere maggiore di zero: {value}"
+        )
+
+    return value
+
+
+def configured_path(env, key):
+    return Path(
+        required_env(env, key)
+    ).expanduser()
+
+
+def load_configuration():
+    global BASE
+    global STATE_FILE
+    global LOCK_FILE
+    global CONTAINER
+    global LOCAL_FIXES
+    global RCON_PORT
+    global RCON_BIN
+    global RCON_PASSWORD
+    global SERVER_READY_TIMEOUT
+    global SERVER_READY_POLL
+    global SERVER_STABILITY_SECONDS
+    global SERVER_STABILITY_POLL
+    global PROJECT_NAME
+    global MAX_START_ATTEMPTS
+
+    env = read_env(ENV_FILE)
+
+    BASE = configured_path(env, "PZ_SERVER_DIR")
+    STATE_FILE = BASE / ".pz-mod-check-state.json"
+    LOCK_FILE = configured_path(env, "PZ_LOCK_FILE")
+    CONTAINER = required_env(env, "PZ_CONTAINER")
+    LOCAL_FIXES = configured_path(env, "PZ_LOCAL_FIXES")
+    RCON_PORT = positive_int_env(env, "PZ_RCON_PORT")
+    RCON_BIN = required_env(env, "PZ_RCON_BIN")
+    RCON_PASSWORD = required_env(env, "RCON_PASSWORD")
+    SERVER_READY_TIMEOUT = positive_int_env(
+        env,
+        "PZ_SERVER_READY_TIMEOUT",
+    )
+    SERVER_READY_POLL = positive_int_env(
+        env,
+        "PZ_SERVER_READY_POLL",
+    )
+    SERVER_STABILITY_SECONDS = positive_int_env(
+        env,
+        "PZ_SERVER_STABILITY_SECONDS",
+    )
+    SERVER_STABILITY_POLL = positive_int_env(
+        env,
+        "PZ_SERVER_STABILITY_POLL",
+    )
+    PROJECT_NAME = required_env(env, "PZ_PROJECT_NAME")
+    MAX_START_ATTEMPTS = positive_int_env(
+        env,
+        "PZ_MAX_START_ATTEMPTS",
+    )
+
+    return env
 
 
 def get_configured_workshop_ids(env):
@@ -628,23 +706,26 @@ def rcon_command(command):
         get_container_ip()
     )
 
-    shell_command = (
-        f'{RCON_BIN} '
-        f'-a {rcon_host}:{RCON_PORT} '
-        f'-p "$RCON_PASSWORD" '
-        f'-T 10s '
-        f'{command}'
-    )
-
     proc = subprocess.run(
         [
             "podman",
             "exec",
+            "-i",
             CONTAINER,
             "sh",
             "-lc",
-            shell_command,
+            (
+                'RCON_PASSWORD="$(cat)"; '
+                "export RCON_PASSWORD; "
+                'exec "$1" -a "$2" -p "$RCON_PASSWORD" -T "$3" "$4"'
+            ),
+            "rcon",
+            RCON_BIN,
+            f"{rcon_host}:{RCON_PORT}",
+            "10s",
+            command,
         ],
+        input=RCON_PASSWORD,
         capture_output=True,
         text=True,
         timeout=15,
@@ -1386,6 +1467,8 @@ def acquire_lock():
 # ------------------------------------------------------------
 
 def main():
+    env = load_configuration()
+
     lock_handle = (
         acquire_lock()
     )
@@ -1401,10 +1484,6 @@ def main():
     log(
         f"Lock acquisito: "
         f"{LOCK_FILE}"
-    )
-
-    env = read_env(
-        ENV_FILE
     )
 
     active_ids = (
