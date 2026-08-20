@@ -5,6 +5,38 @@ dedicated server. When an update is published, it recreates the server only
 while it is empty, applies local compatibility fixes, and verifies that the
 new server instance is stable before recording the new Workshop state.
 
+## Short version implements:
+```bash
+mkdir -p ~/.config/systemd/user
+```
+
+Copy/create:
+```
+~/.config/systemd/user/pz-mod-check.service
+~/.config/systemd/user/pz-mod-check.timer
+```
+```bash
+
+```
+```
+
+```
+
+```bash
+chmod +x ~/<your_server_path>/check-mod-updates.py
+```
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now pz-mod-check.timer
+```
+```bash
+sudo loginctl enable-linger "$USER"
+```
+```bash
+systemctl --user status pz-mod-check.timer
+systemctl --user list-timers --all | grep pz-mod-check
+```
+
 ## What It Does
 
 - Reads active Workshop IDs from `PZ_MOD_IDS` in the server `.env` file.
@@ -34,7 +66,7 @@ Only one check can run at a time. The lock is stored at
 The script currently targets this server directory:
 
 ```text
-/home/matteo/containers/project-zomboid
+/<your_server_path>/project-zomboid
 ```
 
 Update the constants at the top of `check-mod-updates.py` if your deployment
