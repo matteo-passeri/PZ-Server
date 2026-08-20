@@ -10,51 +10,80 @@ import sys
 from datetime import datetime
 
 
-BASE = Path(
-    "/home/matteo/containers/project-zomboid"
-)
+SCRIPT_DIR = Path(__file__).resolve().parent
+ENV_FILE = SCRIPT_DIR / ".env"
 
-WORKSHOP = Path(
-    "/mnt/media_hd/ProjectZomboidServer/"
-    "DedicatedServer/steamapps/workshop/content/108600"
-)
-
-VRO_NC_PATCH_SOURCE = (
-    BASE
-    / "local-patches"
-    / "vro-nearby-containers"
-    / "zzz_VRO_Fixing.lua"
-)
-
-VRO_ORIGINAL_SHA256 = (
-    "c39df1a393d07f21e341fe883d05e775"
-    "ec14471e8ecde8db1bcf2ad1fd6dc9d9"
-)
-
-VRO_PATCHED_SHA256 = (
-    "b734165b0820a0793ceb89697b5f7d03"
-    "f0b707cd538e3ec8d37838485772a2c9"
-)
-
-VRO_NC_MARKER = (
-    "Nearby-container integration (optional companion mod)"
-)
-
-STATE_FILE = Path(
-    "/home/matteo/containers/project-zomboid/"
-    ".pz-local-fixes-state.json"
-)
-
-CONTAINER = "game-project-zomboid"
-VRO_BACKUP_KEEP = 10
-
-VRO_CONTAINER_TARGET = (
-    "/home/steam/zomboid/steamapps/workshop/content/108600/"
-    "2757712197/mods/Vehicle Repair Overhaul/42/media/lua/client/"
-    "zzz_VRO_Fixing.lua"
-)
+BASE = None
+WORKSHOP = None
+STATE_FILE = None
+CONTAINER = None
+FIX_SCRIPTS_DIR = None
 
 LOG_PREFIX = "[PZ-LOCAL-FIX]"
+
+
+def read_env(path):
+    if not path.is_file():
+        raise RuntimeError(f".env non trovato: {path}")
+
+    result = {}
+
+    for raw in path.read_text(
+        encoding="utf-8",
+        errors="replace",
+    ).splitlines():
+        line = raw.strip()
+
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        value = value.strip()
+
+        if (
+            len(value) >= 2
+            and value[0] == value[-1]
+            and value[0] in "\"'"
+        ):
+            value = value[1:-1]
+
+        result[key.strip()] = value
+
+    return result
+
+
+def configured_path(env, key):
+    value = env.get(key, "").strip()
+
+    if not value:
+        raise RuntimeError(f"{key} non presente o vuoto in {ENV_FILE}")
+
+    return Path(value).expanduser()
+
+
+def required_env(env, key):
+    value = env.get(key, "").strip()
+
+    if not value:
+        raise RuntimeError(f"{key} non presente o vuoto in {ENV_FILE}")
+
+    return value
+
+
+def load_configuration():
+    global BASE
+    global WORKSHOP
+    global STATE_FILE
+    global CONTAINER
+    global FIX_SCRIPTS_DIR
+
+    env = read_env(ENV_FILE)
+
+    BASE = configured_path(env, "PZ_SERVER_DIR")
+    WORKSHOP = configured_path(env, "PZ_WORKSHOP_ROOT")
+    STATE_FILE = BASE / ".pz-local-fixes-state.json"
+    CONTAINER = required_env(env, "PZ_CONTAINER")
+    FIX_SCRIPTS_DIR = BASE / "fix-scripts"
 
 
 def log(message):
@@ -143,9 +172,6 @@ def save_state(state):
 # le traduzioni ItemName_Base.CrushedLimestone.
 # ------------------------------------------------------------
 
-FIX_SCRIPTS_DIR = BASE / "fix-scripts"
-
-
 def discover_fix_scripts():
     """
     Carica i fix esterni in ordine alfabetico.
@@ -217,12 +243,6 @@ def build_context(state):
         "WORKSHOP": WORKSHOP,
         "STATE_FILE": STATE_FILE,
         "CONTAINER": CONTAINER,
-        "VRO_BACKUP_KEEP": VRO_BACKUP_KEEP,
-        "VRO_CONTAINER_TARGET": VRO_CONTAINER_TARGET,
-        "VRO_NC_PATCH_SOURCE": VRO_NC_PATCH_SOURCE,
-        "VRO_ORIGINAL_SHA256": VRO_ORIGINAL_SHA256,
-        "VRO_PATCHED_SHA256": VRO_PATCHED_SHA256,
-        "VRO_NC_MARKER": VRO_NC_MARKER,
         "state": state,
         "log": log,
         "sha256": sha256,
@@ -230,6 +250,7 @@ def build_context(state):
 
 
 def main():
+    load_configuration()
     state = load_state()
     ctx = build_context(state)
     changed = False

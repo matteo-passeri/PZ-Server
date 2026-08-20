@@ -5,25 +5,32 @@ import shutil
 import subprocess
 from datetime import datetime
 
+
+VRO_WORKSHOP_ID = "2757712197"
+VRO_MOD_PATH = (
+    "mods/Vehicle Repair Overhaul/42/media/lua/client/"
+    "zzz_VRO_Fixing.lua"
+)
+VRO_CONTAINER_TARGET = (
+    "/home/steam/zomboid/steamapps/workshop/content/108600/"
+    + VRO_WORKSHOP_ID
+    + "/"
+    + VRO_MOD_PATH
+)
+VRO_BACKUP_KEEP = 10
+VRO_NC_MARKER = "Nearby-container integration (optional companion mod)"
+
+
 def run(ctx):
     WORKSHOP = ctx['WORKSHOP']
     CONTAINER = ctx['CONTAINER']
-    VRO_BACKUP_KEEP = ctx['VRO_BACKUP_KEEP']
-    VRO_CONTAINER_TARGET = ctx['VRO_CONTAINER_TARGET']
-    VRO_NC_MARKER = ctx['VRO_NC_MARKER']
     log = ctx['log']
     sha256 = ctx['sha256']
 
     target = (
         WORKSHOP
-        / "2757712197"
-        / "mods"
-        / "Vehicle Repair Overhaul"
-        / "42"
-        / "media"
-        / "lua"
-        / "client"
-        / "zzz_VRO_Fixing.lua"
+        / VRO_WORKSHOP_ID
+        / VRO_MOD_PATH
     )
 
     if not target.is_file():
