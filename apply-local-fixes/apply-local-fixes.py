@@ -11,7 +11,23 @@ from datetime import datetime
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-ENV_FILE = SCRIPT_DIR / ".env"
+PROJECT_DIR = SCRIPT_DIR.parent
+
+
+def shared_env_file():
+    candidates = (
+        PROJECT_DIR / ".env",
+        PROJECT_DIR / "docker-compose" / ".env",
+    )
+
+    for path in candidates:
+        if path.is_file():
+            return path
+
+    return candidates[0]
+
+
+ENV_FILE = shared_env_file()
 
 BASE = None
 WORKSHOP = None
@@ -80,7 +96,10 @@ def load_configuration():
     env = read_env(ENV_FILE)
 
     BASE = configured_path(env, "PZ_SERVER_DIR")
-    WORKSHOP = configured_path(env, "PZ_WORKSHOP_ROOT")
+    WORKSHOP = (
+        configured_path(env, "PZ_DEDICATED_SERVER_DIR")
+        / "steamapps/workshop/content/108600"
+    )
     STATE_FILE = BASE / ".pz-local-fixes-state.json"
     CONTAINER = required_env(env, "PZ_CONTAINER")
     FIX_SCRIPTS_DIR = BASE / "fix-scripts"

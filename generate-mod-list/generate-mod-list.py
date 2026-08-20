@@ -16,7 +16,23 @@ from typing import Any
 import requests
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-CONFIG_ENV_FILE = SCRIPT_DIR / ".env"
+PROJECT_DIR = SCRIPT_DIR.parent
+
+
+def shared_env_file() -> Path:
+    candidates = (
+        PROJECT_DIR / ".env",
+        PROJECT_DIR / "docker-compose" / ".env",
+    )
+
+    for path in candidates:
+        if path.is_file():
+            return path
+
+    return candidates[0]
+
+
+CONFIG_ENV_FILE = shared_env_file()
 
 APP_ID = None
 DEFAULT_COLLECTION_ID = None
@@ -107,9 +123,12 @@ def load_configuration() -> None:
     DETAILS_API = required_env(env, "PZ_DETAILS_API")
     USER_AGENT = required_env(env, "PZ_USER_AGENT")
     BACKUPS_TO_KEEP = positive_int_env(env, "PZ_BACKUPS_TO_KEEP")
-    DEFAULT_WORKSHOP_ROOT = Path(
-        required_env(env, "PZ_WORKSHOP_ROOT")
-    ).expanduser()
+    DEFAULT_WORKSHOP_ROOT = (
+        Path(
+            required_env(env, "PZ_DEDICATED_SERVER_DIR")
+        ).expanduser()
+        / "steamapps/workshop/content/108600"
+    )
 
     managed_keys = tuple(
         key.strip()

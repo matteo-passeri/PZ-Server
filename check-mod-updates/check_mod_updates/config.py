@@ -3,7 +3,23 @@ from datetime import datetime
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
-ENV_FILE = SCRIPT_DIR / ".env"
+PROJECT_DIR = SCRIPT_DIR.parent
+
+
+def shared_env_file():
+    candidates = (
+        PROJECT_DIR / ".env",
+        PROJECT_DIR / "docker-compose" / ".env",
+    )
+
+    for path in candidates:
+        if path.is_file():
+            return path
+
+    return candidates[0]
+
+
+ENV_FILE = shared_env_file()
 
 BASE = None
 STATE_FILE = None
@@ -151,7 +167,7 @@ def load_configuration():
     LOCAL_FIXES = configured_path(env, "PZ_LOCAL_FIXES")
     RCON_PORT = positive_int_env(env, "PZ_RCON_PORT")
     RCON_BIN = required_env(env, "PZ_RCON_BIN")
-    RCON_PASSWORD = required_env(env, "RCON_PASSWORD")
+    RCON_PASSWORD = required_env(env, "PZ_RCON_PASSWORD")
     SERVER_READY_TIMEOUT = positive_int_env(
         env,
         "PZ_SERVER_READY_TIMEOUT",
