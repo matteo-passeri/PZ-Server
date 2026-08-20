@@ -421,9 +421,11 @@ def wait_for_container_running(
 
 
 def wait_for_server_ready(
-    timeout_seconds=
-        SERVER_READY_TIMEOUT,
+    timeout_seconds=None,
 ):
+    if timeout_seconds is None:
+        timeout_seconds = SERVER_READY_TIMEOUT
+
     deadline = (
         time.time()
         + timeout_seconds
@@ -492,9 +494,11 @@ def wait_for_server_ready(
 
 
 def verify_server_stability(
-    stability_seconds=
-        SERVER_STABILITY_SECONDS,
+    stability_seconds=None,
 ):
+    if stability_seconds is None:
+        stability_seconds = SERVER_STABILITY_SECONDS
+
     log(
         "RCON operativo. "
         f"Verifico stabilità per "
