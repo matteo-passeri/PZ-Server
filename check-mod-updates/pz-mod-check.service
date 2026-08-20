@@ -1,0 +1,9 @@
+# /home/<your_username>/.config/systemd/user/pz-mod-check.service
+
+[Unit]
+Description=Project Zomboid Workshop mod update check
+
+[Service]
+Type=oneshot
+WorkingDirectory=/<your_path_to_script_folder>/project-zomboid
+ExecStart=/<your_path_to_script_folder>/check-mod-updates.py

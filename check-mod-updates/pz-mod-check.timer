@@ -1,0 +1,13 @@
+# /home/<your_username>/.config/systemd/user/pz-mod-check.timer
+
+[Unit]
+Description=Check Project Zomboid mod updates every 15 minutes
+
+[Timer]
+OnCalendar=*-*-* *:00,15,30,45:00
+Persistent=true
+AccuracySec=1min
+Unit=pz-mod-check.service
+
+[Install]
+WantedBy=timers.target

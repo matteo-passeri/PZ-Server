@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Local configuration and generated runtime state
+.env
+.pz-mod-check-state.json
+.pz-mod-check-state.json.tmp
+*.bak
+
+# JetBrains project files
+.idea/
