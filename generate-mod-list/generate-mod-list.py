@@ -15,32 +15,147 @@ from typing import Any
 
 import requests
 
-APP_ID = 108600
-DEFAULT_COLLECTION_ID = "3774372246"
-COLLECTION_API = "https://api.steampowered.com/ISteamRemoteStorage/GetCollectionDetails/v1/"
-DETAILS_API = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/"
-USER_AGENT = "Project-Zomboid-Collection-Inspector/4.0"
-MANAGED_ENV_KEYS = ("PZ_MOD_IDS", "PZ_MOD_NAMES", "PZ_MAP_NAMES")
-BACKUPS_TO_KEEP = 3
+SCRIPT_DIR = Path(__file__).resolve().parent
+CONFIG_ENV_FILE = SCRIPT_DIR / ".env"
 
-# Workshop locale del dedicated server.
-# Usato come fallback quando la descrizione Steam non espone "Mod ID:".
-DEFAULT_WORKSHOP_ROOT = Path(
-    "/mnt/media_hd/ProjectZomboidServer/DedicatedServer/"
-    "steamapps/workshop/content/108600"
-)
-
-# Workshop items per cui il Mod ID non viene estratto correttamente
-# dalla descrizione Steam.
-# Questi valori vengono usati SOLO se extract_values() non trova già un Mod ID.
-MOD_ID_OVERRIDES: dict[str, list[str]] = {
-    "3156717975": ["SkillRecoveryJournalReminder"],
-    "3780639614": ["PushVehicle"],
-}
+APP_ID = None
+DEFAULT_COLLECTION_ID = None
+COLLECTION_API = None
+DETAILS_API = None
+USER_AGENT = None
+MANAGED_ENV_KEYS = None
+BACKUPS_TO_KEEP = None
+DEFAULT_WORKSHOP_ROOT = None
+MOD_ID_OVERRIDES = None
 
 
 class SteamAPIError(RuntimeError):
     pass
+
+
+def read_env(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        raise RuntimeError(f".env non trovato: {path}")
+
+    result: dict[str, str] = {}
+
+    for raw in path.read_text(
+        encoding="utf-8",
+        errors="replace",
+    ).splitlines():
+        line = raw.strip()
+
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        value = value.strip()
+
+        if (
+            len(value) >= 2
+            and value[0] == value[-1]
+            and value[0] in "\"'"
+        ):
+            value = value[1:-1]
+
+        result[key.strip()] = value
+
+    return result
+
+
+def required_env(env: dict[str, str], key: str) -> str:
+    value = env.get(key, "").strip()
+
+    if not value:
+        raise RuntimeError(f"{key} non presente o vuoto in {CONFIG_ENV_FILE}")
+
+    return value
+
+
+def positive_int_env(env: dict[str, str], key: str) -> int:
+    raw = required_env(env, key)
+
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"{key} deve essere un intero positivo: {raw!r}"
+        ) from exc
+
+    if value <= 0:
+        raise RuntimeError(f"{key} deve essere maggiore di zero: {value}")
+
+    return value
+
+
+def load_configuration() -> None:
+    global APP_ID
+    global DEFAULT_COLLECTION_ID
+    global COLLECTION_API
+    global DETAILS_API
+    global USER_AGENT
+    global MANAGED_ENV_KEYS
+    global BACKUPS_TO_KEEP
+    global DEFAULT_WORKSHOP_ROOT
+    global MOD_ID_OVERRIDES
+
+    env = read_env(CONFIG_ENV_FILE)
+
+    APP_ID = positive_int_env(env, "PZ_APP_ID")
+    DEFAULT_COLLECTION_ID = required_env(env, "PZ_DEFAULT_COLLECTION_ID")
+    COLLECTION_API = required_env(env, "PZ_COLLECTION_API")
+    DETAILS_API = required_env(env, "PZ_DETAILS_API")
+    USER_AGENT = required_env(env, "PZ_USER_AGENT")
+    BACKUPS_TO_KEEP = positive_int_env(env, "PZ_BACKUPS_TO_KEEP")
+    DEFAULT_WORKSHOP_ROOT = Path(
+        required_env(env, "PZ_WORKSHOP_ROOT")
+    ).expanduser()
+
+    managed_keys = tuple(
+        key.strip()
+        for key in required_env(env, "PZ_MANAGED_ENV_KEYS").split(",")
+        if key.strip()
+    )
+
+    if not managed_keys:
+        raise RuntimeError("PZ_MANAGED_ENV_KEYS non contiene variabili valide")
+
+    MANAGED_ENV_KEYS = managed_keys
+
+    try:
+        overrides = json.loads(
+            required_env(env, "PZ_MOD_ID_OVERRIDES")
+        )
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "PZ_MOD_ID_OVERRIDES deve contenere un oggetto JSON valido"
+        ) from exc
+
+    if not isinstance(overrides, dict):
+        raise RuntimeError("PZ_MOD_ID_OVERRIDES deve essere un oggetto JSON")
+
+    normalized_overrides: dict[str, list[str]] = {}
+
+    for workshop_id, mod_ids in overrides.items():
+        if not isinstance(workshop_id, str) or not workshop_id.isdigit():
+            raise RuntimeError(
+                "PZ_MOD_ID_OVERRIDES contiene un Workshop ID non valido: "
+                f"{workshop_id!r}"
+            )
+
+        if (
+            not isinstance(mod_ids, list)
+            or not mod_ids
+            or not all(isinstance(mod_id, str) and mod_id for mod_id in mod_ids)
+        ):
+            raise RuntimeError(
+                "PZ_MOD_ID_OVERRIDES deve associare ogni Workshop ID "
+                "a una lista non vuota di Mod ID"
+            )
+
+        normalized_overrides[workshop_id] = mod_ids
+
+    MOD_ID_OVERRIDES = normalized_overrides
 
 
 def parse_args() -> argparse.Namespace:
@@ -49,7 +164,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("collection_id", nargs="?", default=DEFAULT_COLLECTION_ID)
     p.add_argument("--output-dir", type=Path, default=Path("."))
-    p.add_argument("--env-file", type=Path, default=Path(".env"))
+    p.add_argument("--env-file", type=Path, default=CONFIG_ENV_FILE)
     p.add_argument("--strict", action="store_true", help="Exit 2 se trova problemi seri")
     p.add_argument("--no-env-update", action="store_true", help="Non modificare .env")
     p.add_argument("--no-backup", action="store_true")
@@ -597,6 +712,7 @@ def update_env_file(
 
 
 def main() -> int:
+    load_configuration()
     args = parse_args()
 
     if not str(args.collection_id).isdigit():
