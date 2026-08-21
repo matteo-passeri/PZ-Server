@@ -41,6 +41,10 @@ services:
       MOD_IDS: "${PZ_MOD_IDS}"
       MOD_NAMES: "${PZ_MOD_NAMES}"
       MAP_NAMES: "${PZ_MAP_NAMES}"
+      MOD_BLACKLIST_WORKSHOP: "${PZ_MOD_BLACKLIST_WORKSHOP:-}"
+      MOD_BLACKLIST_MODS: "${PZ_MOD_BLACKLIST_MODS:-}"
+      MOD_FORCED_WORKSHOP: "${PZ_MOD_FORCED_WORKSHOP:-}"
+      MOD_FORCED_MODS: "${PZ_MOD_FORCED_MODS:-}"
 
       # Leave enabled unless a mod specifically requires disabling it.
       #ANTI_CHEAT_TYPE21: "true"

@@ -71,14 +71,11 @@ modify_jvm_config () {
 # Mod IDs      -> MOD_NAMES / Mods
 # ------------------------------------------------------------
 
-MOD_BLACKLIST_WORKSHOP=()
-
-MOD_BLACKLIST_MODS=(
-  "Waterpipes"
-)
-
-MOD_FORCED_WORKSHOP=()
-MOD_FORCED_MODS=()
+# Lists are semicolon-separated environment variables, supplied by Compose.
+IFS=';' read -r -a MOD_BLACKLIST_WORKSHOP <<< "${MOD_BLACKLIST_WORKSHOP:-}"
+IFS=';' read -r -a MOD_BLACKLIST_MODS <<< "${MOD_BLACKLIST_MODS:-}"
+IFS=';' read -r -a MOD_FORCED_WORKSHOP <<< "${MOD_FORCED_WORKSHOP:-}"
+IFS=';' read -r -a MOD_FORCED_MODS <<< "${MOD_FORCED_MODS:-}"
 
 
 filter_mod_list () {
