@@ -3,7 +3,7 @@ Readme.md temporally created by AI
 
 Operational scripts for a Project Zomboid Build 42 dedicated server running
 with Podman Compose. They keep the server's Workshop configuration in sync
-with a Steam collection, apply narrowly scoped local compatibility patches,
+with one or more Steam collections, apply narrowly scoped local compatibility patches,
 and defer mod-update restarts until the server is empty.
 
 ## Repository layout
@@ -11,7 +11,7 @@ and defer mod-update restarts until the server is empty.
 | Directory | Purpose |
 | --- | --- |
 | `docker-compose/` | Compose definition and custom container entrypoint. |
-| `generate-mod-list/` | Builds `PZ_MOD_IDS`, `PZ_MOD_NAMES`, and `PZ_MAP_NAMES` from a Steam Workshop collection. |
+| `generate-mod-list/` | Builds `PZ_MOD_IDS`, `PZ_MOD_NAMES`, and `PZ_MAP_NAMES` from Steam Workshop collections. |
 | `apply-local-fixes/` | Idempotent, guarded patches for downloaded Workshop files. |
 | `check-mod-updates/` | Checks active Workshop items and safely recreates the server when updates are available. |
 
@@ -21,7 +21,7 @@ and defer mod-update restarts until the server is empty.
 - Podman and `podman-compose`
 - A Project Zomboid dedicated-server installation mounted into the container
 - RCON enabled in the server, with the `rcon` client installed in the container
-- A Steam Workshop collection containing the server's mods
+- One or more Steam Workshop collections containing the server's mods
 
 All paths in the examples are placeholders and must be made absolute for the
 host on which the server runs. Do not commit `.env` files: they hold passwords
@@ -48,12 +48,19 @@ and local paths and are ignored by Git.
    python3 generate-mod-list.py --output-dir ../docker-compose --env-file ../docker-compose/.env
    ```
 
-   Set `PZ_DEFAULT_COLLECTION_ID` to the Steam collection ID. The generator
-   reads Mod ID and Map information from Workshop metadata, falls back to local
-   `mod.info` files when available, and writes the three `PZ_*` mod-list values
-   to the Compose `.env`. It also creates JSON, text, environment, and Compose
-   reports in the output directory. Use `--strict` to make serious collection
-   problems return exit code 2.
+   Set `PZ_DEFAULT_COLLECTION_ID` to one or more comma-separated Steam
+   collection IDs. Set `PZ_MAP_COLLECTION_IDS` to the comma-separated
+   collection IDs that contain only map mods; those collections are included in
+   the Workshop list automatically. The generator does not use Steam tags or
+   descriptions to classify maps. It uses an explicit map-folder value where
+   available, otherwise the Workshop title, and writes the three `PZ_*`
+   mod-list values to the Compose `.env`. Map mods are written before
+   `Muldraugh, KY`. It also creates JSON, text, environment, and Compose reports
+   in the output directory. Use `--strict` to make serious collection problems
+   return exit code 2.
+   Collection IDs can also be provided on the command line, separated by spaces
+   or commas; their order determines the resulting mod order. Duplicate Workshop
+   items are included only once.
 
 3. Configure the local patcher:
 
@@ -91,7 +98,7 @@ and local paths and are ignored by Git.
 
 ## Normal operation
 
-Regenerate the mod configuration whenever the collection changes:
+Regenerate the mod configuration whenever a collection changes:
 
 ```bash
 cd generate-mod-list

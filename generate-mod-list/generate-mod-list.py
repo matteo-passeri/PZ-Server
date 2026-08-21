@@ -20,6 +20,7 @@ CONFIG_ENV_FILE = SCRIPT_DIR / ".env"
 
 APP_ID = None
 DEFAULT_COLLECTION_ID = None
+MAP_COLLECTION_IDS = None
 COLLECTION_API = None
 DETAILS_API = None
 USER_AGENT = None
@@ -91,6 +92,7 @@ def positive_int_env(env: dict[str, str], key: str) -> int:
 def load_configuration() -> None:
     global APP_ID
     global DEFAULT_COLLECTION_ID
+    global MAP_COLLECTION_IDS
     global COLLECTION_API
     global DETAILS_API
     global USER_AGENT
@@ -103,6 +105,7 @@ def load_configuration() -> None:
 
     APP_ID = positive_int_env(env, "PZ_APP_ID")
     DEFAULT_COLLECTION_ID = required_env(env, "PZ_DEFAULT_COLLECTION_ID")
+    MAP_COLLECTION_IDS = env.get("PZ_MAP_COLLECTION_IDS", "").strip()
     COLLECTION_API = required_env(env, "PZ_COLLECTION_API")
     DETAILS_API = required_env(env, "PZ_DETAILS_API")
     USER_AGENT = required_env(env, "PZ_USER_AGENT")
@@ -163,9 +166,14 @@ def load_configuration() -> None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Genera e aggiorna la configurazione mod di Project Zomboid da una collection Steam."
+        description="Genera e aggiorna la configurazione mod di Project Zomboid da una o piu collection Steam."
     )
-    p.add_argument("collection_id", nargs="?", default=DEFAULT_COLLECTION_ID)
+    p.add_argument(
+        "collection_ids",
+        nargs="*",
+        metavar="collection_id",
+        help="Uno o piu ID collection; ogni argomento puo contenere ID separati da virgole.",
+    )
     p.add_argument("--output-dir", type=Path, default=Path("."))
     p.add_argument("--env-file", type=Path, default=CONFIG_ENV_FILE)
     p.add_argument("--strict", action="store_true", help="Exit 2 se trova problemi seri")
@@ -181,6 +189,29 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     return p.parse_args()
+
+
+def normalize_collection_ids(raw_values: list[str]) -> list[str]:
+    """Validate, de-duplicate, and preserve the order of collection IDs."""
+    collection_ids: list[str] = []
+
+    for raw_value in raw_values:
+        for collection_id in raw_value.split(","):
+            collection_id = collection_id.strip()
+
+            if not collection_id or not collection_id.isdigit():
+                raise ValueError(
+                    "collection ID deve essere numerico: "
+                    f"{collection_id or raw_value!r}"
+                )
+
+            if collection_id not in collection_ids:
+                collection_ids.append(collection_id)
+
+    if not collection_ids:
+        raise ValueError("specificare almeno una collection ID")
+
+    return collection_ids
 
 
 def now_utc() -> str:
@@ -455,6 +486,30 @@ def extract_values(
     return out
 
 
+def extract_map_names(
+    title: str,
+    description: str,
+    is_map_collection_item: bool,
+) -> list[str]:
+    """Return map names only for items explicitly placed in a map collection."""
+    if not is_map_collection_item:
+        return []
+
+    maps = extract_values(
+        [
+            "Map Folder",
+            "Map Folder Name",
+            "Map Name",
+        ],
+        description,
+    )
+
+    if not maps:
+        maps = [title]
+
+    return maps
+
+
 
 def read_mod_id_from_info(path: Path) -> str | None:
     """Legge il primo id= valido da un file mod.info."""
@@ -718,12 +773,27 @@ def main() -> int:
     load_configuration()
     args = parse_args()
 
-    if not str(args.collection_id).isdigit():
+    try:
+        mod_collection_ids = normalize_collection_ids(
+            args.collection_ids or [DEFAULT_COLLECTION_ID]
+        )
+        map_collection_ids = (
+            normalize_collection_ids([MAP_COLLECTION_IDS])
+            if MAP_COLLECTION_IDS
+            else []
+        )
+    except ValueError as exc:
         print(
-            "ERRORE: collection_id deve essere numerico",
+            f"ERRORE: {exc}",
             file=sys.stderr,
         )
         return 1
+
+    selected_collection_ids = list(dict.fromkeys(
+        mod_collection_ids + map_collection_ids
+    ))
+    collections_display = ", ".join(selected_collection_ids)
+    map_collection_id_set = set(map_collection_ids)
 
     outdir = (
         args.output_dir
@@ -792,21 +862,38 @@ def main() -> int:
         "Accept": "application/json,text/html",
     })
 
-    print(
-        f"Lettura collection Steam {args.collection_id}..."
-    )
+    collection_ids: list[str] = []
+    duplicate_workshop_ids: list[str] = []
+    map_workshop_ids: set[str] = set()
 
-    (
-        collection_ids,
-        duplicate_workshop_ids,
-    ) = get_collection(
-        session,
-        str(args.collection_id),
-    )
+    for collection_id in selected_collection_ids:
+        print(
+            f"Lettura collection Steam {collection_id}..."
+        )
 
-    print(
-        f"Workshop Item unici nella collection: {len(collection_ids)}"
-    )
+        (
+            current_collection_ids,
+            current_duplicates,
+        ) = get_collection(
+            session,
+            collection_id,
+        )
+
+        print(
+            "Workshop Item unici nella collection: "
+            f"{len(current_collection_ids)}"
+        )
+
+        if collection_id in map_collection_id_set:
+            map_workshop_ids.update(current_collection_ids)
+
+        for workshop_id in current_duplicates + current_collection_ids:
+            if workshop_id in collection_ids:
+                if workshop_id not in duplicate_workshop_ids:
+                    duplicate_workshop_ids.append(workshop_id)
+                continue
+
+            collection_ids.append(workshop_id)
 
     details = get_details(
         session,
@@ -945,13 +1032,10 @@ def main() -> int:
                     f"{', '.join(mids)}"
                 )
 
-        maps = extract_values(
-            [
-                "Map Folder",
-                "Map Folder Name",
-                "Map Name",
-            ],
+        maps = extract_map_names(
+            title,
             desc,
+            wid in map_workshop_ids,
         )
 
         valid_mids: list[str] = []
@@ -1036,6 +1120,7 @@ def main() -> int:
             "title": title,
             "mod_ids": valid_mids,
             "map_names": valid_maps,
+            "is_map_mod": wid in map_workshop_ids,
             "time_created": d.get("time_created"),
             "time_updated": d.get("time_updated"),
         })
@@ -1116,7 +1201,10 @@ def main() -> int:
 
     result = {
         "generated_at_utc": generated,
-        "collection_id": str(args.collection_id),
+        "collection_id": ",".join(selected_collection_ids),
+        "collection_ids": selected_collection_ids,
+        "mod_collection_ids": mod_collection_ids,
+        "map_collection_ids": map_collection_ids,
         "workshop_ids": workshop_ids,
         "mod_ids": mod_ids,
         "map_names": final_maps,
@@ -1146,7 +1234,7 @@ def main() -> int:
 
     generated_env = "\n".join([
         "# Generato automaticamente da generate-mod-list.py",
-        f"# Collection Steam: {args.collection_id}",
+        f"# Collection Steam: {collections_display}",
         f"# Generato UTC: {generated}",
         *(
             f"{k}={dotenv_quote(v)}"
@@ -1160,7 +1248,11 @@ def main() -> int:
         "=" * 38,
         "",
         f"Generato UTC: {generated}",
-        f"Collection: {args.collection_id}",
+        f"Collection: {collections_display}",
+        (
+            "Collection mappe: "
+            + (", ".join(map_collection_ids) or "Nessuna")
+        ),
         f"Workshop validi: {len(workshop_ids)}",
         f"Mod ID unici: {len(mod_ids)}",
         f"Mappe moddate: {len(map_names)}",
