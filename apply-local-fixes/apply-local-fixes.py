@@ -112,6 +112,49 @@ def sha256(path):
     return h.hexdigest()
 
 
+def ensure_symlink(source, destination, link_target=None):
+    """
+    Crea o ripristina un symlink senza sovrascrivere contenuto reale.
+
+    Restituisce uno stato tra: created, present, replaced, blocked,
+    source_missing.
+    """
+    if link_target is None:
+        link_target = source
+
+    if not source.exists():
+        return "source_missing"
+
+    if destination.is_symlink():
+        try:
+            if (
+                destination.readlink() == Path(link_target)
+                and destination.samefile(source)
+            ):
+                return "present"
+        except OSError:
+            pass
+
+        destination.unlink()
+        status = "replaced"
+    elif destination.exists():
+        return "blocked"
+    else:
+        status = "created"
+
+    destination.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    destination.symlink_to(
+        link_target,
+        target_is_directory=source.is_dir(),
+    )
+
+    return status
+
+
 def load_state():
     if not STATE_FILE.is_file():
         return {
@@ -249,6 +292,7 @@ def build_context(state):
         "state": state,
         "log": log,
         "sha256": sha256,
+        "ensure_symlink": ensure_symlink,
     }
 
 
