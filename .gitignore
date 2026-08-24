@@ -19,3 +19,9 @@ project-zomboid-mods-report.txt
 
 # JetBrains project files
 .idea/
+
+# Local/manual backups
+backups/
+
+# Local Python virtual environment
+.venv/
