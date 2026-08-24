@@ -33,3 +33,14 @@ required lowercase `42/media` aliases: `lua`, `animsets`, `scripts`, and
 model scripts visible without replacing the whole lowercase mod root. Do not
 make `mods/companiondogs` a symlink to `CompanionDogs`: that causes a WorldGen
 startup failure.
+
+## Hot Brass Linux aliases
+
+`Linux_Animsets_Marz_Mods` must remain last in the Mod ID load order; it is
+still required for the broader Marz AnimSets compatibility work. Hot Brass
+also resolves its own AnimSets through lowercase paths on Linux, so the local
+fix patches Workshop item `3610677934`, not that compatibility mod. It manages
+a lowercase Hot Brass mod-root alias, `media/animsets -> AnimSets`, and
+lowercase aliases for mixed-case XML filenames in the selected B42 AnimSets
+tree. Upstream real files and directories, or unexpected symlinks, are left
+untouched and logged.
