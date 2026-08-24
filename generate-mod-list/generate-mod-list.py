@@ -37,6 +37,12 @@ MOD_ID_OVERRIDES = None
 # pair to MOD_LOAD_AFTER when the first Mod ID must load after the second.
 MOD_LOAD_BEFORE = [
     ("HBVCEFb42", "SWMG"),
+    ("NeatUI_Framework", "Neat_Crafting"),
+    ("NeatUI_Framework", "Project_Cook"),
+    ("Neat_Crafting", "Project_Cook"),
+    ("Project_Cook", "Project_Cook_Pixel_Icon_Pack"),
+    ("VehicleRepairOverhaul", "VehicleSalvageOverhaulB42"),
+    ("VehicleRepairOverhaul", "VRONearbyContainers"),
     ("CompanionDogs", "CompanionDogsRottweiler"),
     ("CompanionDogs", "CompanionDogsDoberman"),
 ]
