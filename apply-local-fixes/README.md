@@ -23,3 +23,13 @@ The existing exit-code contract is preserved:
 - 10 = one or more patches changed
 - 1 = error
 - 130 = interrupted
+
+## Companion Dogs Linux aliases
+
+On Linux, Project Zomboid can resolve Companion Dogs assets through the
+lowercase `mods/companiondogs` path. The Companion Dogs fix creates only the
+required lowercase `42/media` aliases: `lua`, `animsets`, `scripts`, and
+`models_X`, plus the existing `defaultpathfind.xml` case alias. This keeps
+model scripts visible without replacing the whole lowercase mod root. Do not
+make `mods/companiondogs` a symlink to `CompanionDogs`: that causes a WorldGen
+startup failure.

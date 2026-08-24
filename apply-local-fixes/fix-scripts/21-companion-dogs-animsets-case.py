@@ -5,87 +5,87 @@ WORKSHOP_ID = "3740052292"
 MOD_NAME = "CompanionDogs"
 
 
-def log_alias_result(log, alias, destination, result):
-    if result == "created":
-        log(f"CompanionDogs: creato alias {alias}.")
-    elif result == "replaced":
-        log(f"CompanionDogs: alias {alias} ripristinato.")
-    elif result == "present":
-        log(f"CompanionDogs: alias {alias} già presente; skip.")
-    elif result == "blocked":
+def ensure_targeted_alias(log, source, destination, link_target, label):
+    """Create one known lowercase alias without taking over upstream paths."""
+    if not source.exists():
+        return "source_missing"
+
+    if destination.is_symlink():
+        try:
+            if (
+                destination.readlink() == link_target
+                and destination.samefile(source)
+            ):
+                return "present"
+        except OSError:
+            pass
+
         log(
-            "CompanionDogs: destinazione "
-            f"{destination} esiste e non è un symlink; "
-            "NON sovrascrivo."
+            f"CompanionDogs: lowercase {label} alias points to an "
+            "unexpected target; NOT replacing it."
         )
-    else:
-        log(f"CompanionDogs: sorgente alias {alias} non presente; skip.")
+        return "unexpected"
+
+    if destination.exists():
+        log(
+            f"CompanionDogs: lowercase {label} path exists as a real "
+            "file or directory; not touching it."
+        )
+        return "blocked"
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.symlink_to(link_target, target_is_directory=source.is_dir())
+    log(f"CompanionDogs: created lowercase {label} alias.")
+    return "created"
 
 
 def run(ctx):
     workshop = ctx["WORKSHOP"]
     log = ctx["log"]
-    ensure_symlink = ctx["ensure_symlink"]
 
     mod_root = workshop / WORKSHOP_ID / "mods" / MOD_NAME / "42"
-    animsets = mod_root / "media" / "AnimSets"
+    media_root = mod_root / "media"
 
-    if not animsets.is_dir():
-        log("CompanionDogs: AnimSets non presente; skip.")
+    if not media_root.is_dir():
+        log("CompanionDogs: mod not present; skip.")
         return False
 
+    lowercase_media_root = (
+        workshop / WORKSHOP_ID / "mods" / MOD_NAME.lower() / "42" / "media"
+    )
+    aliases = (
+        ("lua", media_root / "lua", "lua"),
+        ("animsets", media_root / "AnimSets", "AnimSets"),
+        ("scripts", media_root / "scripts", "scripts"),
+        ("models_X", media_root / "models_X", "models_X"),
+    )
+
     changed = False
-
-    lowercase_animsets = (
-        workshop
-        / WORKSHOP_ID
-        / "mods"
-        / MOD_NAME.lower()
-        / "42"
-        / "media"
-        / "animsets"
-    )
-
-    result = ensure_symlink(
-        animsets,
-        lowercase_animsets,
-        "../../../CompanionDogs/42/media/AnimSets",
-    )
-    log_alias_result(
-        log,
-        "lowercase AnimSets",
-        lowercase_animsets,
-        result,
-    )
-    changed = result in ("created", "replaced")
+    for label, source, source_name in aliases:
+        result = ensure_targeted_alias(
+            log,
+            source,
+            lowercase_media_root / label,
+            f"../../../{MOD_NAME}/42/media/{source_name}",
+            label,
+        )
+        changed = changed or result == "created"
 
     default_pathfind = (
-        animsets
-        / "raccoon"
-        / "pathfind"
-        / "defaultPathfind.xml"
+        media_root / "AnimSets" / "raccoon" / "pathfind" / "defaultPathfind.xml"
     )
-    lowercase_default_pathfind = (
-        default_pathfind.parent
-        / "defaultpathfind.xml"
-    )
-
-    result = ensure_symlink(
-        default_pathfind,
-        lowercase_default_pathfind,
-        default_pathfind.name,
-    )
-    log_alias_result(
+    result = ensure_targeted_alias(
         log,
+        default_pathfind,
+        default_pathfind.parent / "defaultpathfind.xml",
+        "defaultPathfind.xml",
         "defaultpathfind.xml",
-        lowercase_default_pathfind,
-        result,
     )
 
-    return changed or result in ("created", "replaced")
+    return changed or result == "created"
 
 
 FIX = {
-    "name": "Companion Dogs B42 AnimSets case aliases",
+    "name": "Companion Dogs B42 targeted lowercase compatibility aliases",
     "run": run,
 }
