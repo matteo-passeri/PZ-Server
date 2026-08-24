@@ -1,12 +1,21 @@
 # Python
 __pycache__/
 *.py[cod]
+*.pyc
 
 # Local configuration and generated runtime state
 .env
 .pz-mod-check-state.json
 .pz-mod-check-state.json.tmp
+.pz-local-fixes-state.json
+.pz-local-fixes-state.json.tmp
 *.bak
+*.backup
+*.before-*
+project-zomboid-mods-compose.yml
+project-zomboid-mods.env
+project-zomboid-mods.json
+project-zomboid-mods-report.txt
 
 # JetBrains project files
 .idea/

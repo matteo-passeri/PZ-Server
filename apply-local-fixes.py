@@ -86,7 +86,7 @@ def load_configuration():
     )
     STATE_FILE = BASE / ".pz-local-fixes-state.json"
     CONTAINER = required_env(env, "PZ_CONTAINER")
-    FIX_SCRIPTS_DIR = BASE / "fix-scripts"
+    FIX_SCRIPTS_DIR = SCRIPT_DIR / "fix-scripts"
 
 
 def log(message):

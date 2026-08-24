@@ -246,7 +246,7 @@ def parse_args() -> argparse.Namespace:
         metavar="collection_id",
         help="Uno o piu ID collection; ogni argomento puo contenere ID separati da virgole.",
     )
-    p.add_argument("--output-dir", type=Path, default=Path("."))
+    p.add_argument("--output-dir", type=Path, default=SCRIPT_DIR)
     p.add_argument("--env-file", type=Path, default=CONFIG_ENV_FILE)
     p.add_argument("--strict", action="store_true", help="Exit 2 se trova problemi seri")
     p.add_argument("--no-env-update", action="store_true", help="Non modificare .env")
