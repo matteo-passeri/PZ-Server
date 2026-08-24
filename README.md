@@ -51,7 +51,9 @@ and local paths and are ignored by Git.
    Set `PZ_DEFAULT_COLLECTION_ID` to one or more comma-separated Steam
    collection IDs. Set `PZ_MAP_COLLECTION_IDS` to the comma-separated
    collection IDs that contain only map mods; those collections are included in
-   the Workshop list automatically. The generator does not use Steam tags or
+   the Workshop list automatically. Set `PZ_LASTTOLOAD_COLLECTION_ID` to one
+   or more comma-separated collection IDs when their mods must be loaded last;
+   their order is preserved. The generator does not use Steam tags or
    descriptions to classify maps. It uses an explicit map-folder value where
    available, otherwise the Workshop title, and writes the three `PZ_*`
    mod-list values to the Compose `.env`. Map mods are written before

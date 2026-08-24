@@ -21,6 +21,7 @@ CONFIG_ENV_FILE = SCRIPT_DIR / ".env"
 APP_ID = None
 DEFAULT_COLLECTION_ID = None
 MAP_COLLECTION_IDS = None
+LAST_TO_LOAD_COLLECTION_IDS = None
 COLLECTION_API = None
 DETAILS_API = None
 USER_AGENT = None
@@ -93,6 +94,7 @@ def load_configuration() -> None:
     global APP_ID
     global DEFAULT_COLLECTION_ID
     global MAP_COLLECTION_IDS
+    global LAST_TO_LOAD_COLLECTION_IDS
     global COLLECTION_API
     global DETAILS_API
     global USER_AGENT
@@ -106,6 +108,9 @@ def load_configuration() -> None:
     APP_ID = positive_int_env(env, "PZ_APP_ID")
     DEFAULT_COLLECTION_ID = required_env(env, "PZ_DEFAULT_COLLECTION_ID")
     MAP_COLLECTION_IDS = env.get("PZ_MAP_COLLECTION_IDS", "").strip()
+    LAST_TO_LOAD_COLLECTION_IDS = env.get(
+        "PZ_LASTTOLOAD_COLLECTION_ID", ""
+    ).strip()
     COLLECTION_API = required_env(env, "PZ_COLLECTION_API")
     DETAILS_API = required_env(env, "PZ_DETAILS_API")
     USER_AGENT = required_env(env, "PZ_USER_AGENT")
@@ -212,6 +217,26 @@ def normalize_collection_ids(raw_values: list[str]) -> list[str]:
         raise ValueError("specificare almeno una collection ID")
 
     return collection_ids
+
+
+def append_collection_items(
+    collection_ids: list[str],
+    incoming_ids: list[str],
+    move_to_end: bool = False,
+) -> list[str]:
+    """Append collection items, optionally moving existing IDs to the end."""
+    duplicates: list[str] = []
+
+    for workshop_id in incoming_ids:
+        if workshop_id in collection_ids:
+            duplicates.append(workshop_id)
+            if not move_to_end:
+                continue
+            collection_ids.remove(workshop_id)
+
+        collection_ids.append(workshop_id)
+
+    return duplicates
 
 
 def now_utc() -> str:
@@ -782,6 +807,11 @@ def main() -> int:
             if MAP_COLLECTION_IDS
             else []
         )
+        last_to_load_collection_ids = (
+            normalize_collection_ids([LAST_TO_LOAD_COLLECTION_IDS])
+            if LAST_TO_LOAD_COLLECTION_IDS
+            else []
+        )
     except ValueError as exc:
         print(
             f"ERRORE: {exc}",
@@ -789,8 +819,14 @@ def main() -> int:
         )
         return 1
 
+    last_to_load_collection_id_set = set(last_to_load_collection_ids)
     selected_collection_ids = list(dict.fromkeys(
-        mod_collection_ids + map_collection_ids
+        [
+            collection_id
+            for collection_id in mod_collection_ids + map_collection_ids
+            if collection_id not in last_to_load_collection_id_set
+        ]
+        + last_to_load_collection_ids
     ))
     collections_display = ", ".join(selected_collection_ids)
     map_collection_id_set = set(map_collection_ids)
@@ -865,6 +901,7 @@ def main() -> int:
     collection_ids: list[str] = []
     duplicate_workshop_ids: list[str] = []
     map_workshop_ids: set[str] = set()
+    last_to_load_workshop_ids: set[str] = set()
 
     for collection_id in selected_collection_ids:
         print(
@@ -887,13 +924,18 @@ def main() -> int:
         if collection_id in map_collection_id_set:
             map_workshop_ids.update(current_collection_ids)
 
-        for workshop_id in current_duplicates + current_collection_ids:
-            if workshop_id in collection_ids:
-                if workshop_id not in duplicate_workshop_ids:
-                    duplicate_workshop_ids.append(workshop_id)
-                continue
+        if collection_id in last_to_load_collection_id_set:
+            last_to_load_workshop_ids.update(current_collection_ids)
 
-            collection_ids.append(workshop_id)
+        duplicate_ids = append_collection_items(
+            collection_ids,
+            current_duplicates + current_collection_ids,
+            move_to_end=collection_id in last_to_load_collection_id_set,
+        )
+
+        for workshop_id in duplicate_ids:
+            if workshop_id not in duplicate_workshop_ids:
+                duplicate_workshop_ids.append(workshop_id)
 
     details = get_details(
         session,
@@ -1108,8 +1150,11 @@ def main() -> int:
         workshop_ids.append(wid)
 
         for x in valid_mids:
-            if x not in mod_ids:
-                mod_ids.append(x)
+            if x in mod_ids:
+                if wid not in last_to_load_workshop_ids:
+                    continue
+                mod_ids.remove(x)
+            mod_ids.append(x)
 
         for x in valid_maps:
             if x not in map_names:
@@ -1205,6 +1250,7 @@ def main() -> int:
         "collection_ids": selected_collection_ids,
         "mod_collection_ids": mod_collection_ids,
         "map_collection_ids": map_collection_ids,
+        "last_to_load_collection_ids": last_to_load_collection_ids,
         "workshop_ids": workshop_ids,
         "mod_ids": mod_ids,
         "map_names": final_maps,
@@ -1252,6 +1298,10 @@ def main() -> int:
         (
             "Collection mappe: "
             + (", ".join(map_collection_ids) or "Nessuna")
+        ),
+        (
+            "Collection caricate per ultime: "
+            + (", ".join(last_to_load_collection_ids) or "Nessuna")
         ),
         f"Workshop validi: {len(workshop_ids)}",
         f"Mod ID unici: {len(mod_ids)}",

@@ -43,6 +43,22 @@ class CollectionSelectionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             GENERATOR.normalize_collection_ids(["100,not-an-id"])
 
+    def test_last_to_load_items_are_moved_to_the_end_in_collection_order(self) -> None:
+        collection_ids = ["10", "20", "30"]
+
+        GENERATOR.append_collection_items(
+            collection_ids,
+            ["20", "40"],
+            move_to_end=True,
+        )
+        GENERATOR.append_collection_items(
+            collection_ids,
+            ["10", "50"],
+            move_to_end=True,
+        )
+
+        self.assertEqual(collection_ids, ["30", "20", "40", "10", "50"])
+
 
 if __name__ == "__main__":
     unittest.main()
