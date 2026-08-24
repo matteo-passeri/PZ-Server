@@ -28,7 +28,7 @@ def run(ctx):
         if not root.is_dir():
             log(
                 f"Limestone: Workshop {workshop_id} "
-                "non presente; skip."
+                "not present; skip."
             )
             continue
 
@@ -98,9 +98,9 @@ def run(ctx):
                 )
 
                 log(
-                    "Limestone: corretto "
+                    "Limestone: corrected "
                     f"{path} "
-                    f"({count} occorrenze)."
+                    f"({count} occurrences)."
                 )
 
                 changed = True

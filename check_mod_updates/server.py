@@ -154,12 +154,12 @@ def validate_fresh_container_state(
 ):
     if state is None:
         raise RuntimeError(
-            "Container non presente"
+            "Container not found"
         )
 
     if not state["running"]:
         raise RuntimeError(
-            "Container non running "
+            "Container not running "
             f"(status={state['status']}, "
             f"restarting={state['restarting']}, "
             f"exit={state['exit_code']})"
@@ -173,15 +173,15 @@ def validate_fresh_container_state(
 
     if restart_count is None:
         raise RuntimeError(
-            "Impossibile determinare RestartCount"
+            "Unable to determine RestartCount"
         )
 
     if restart_count != 0:
         raise RuntimeError(
-            "Il nuovo container si è già "
-            "riavviato autonomamente "
+            "The new container has already "
+            "restarted on its own "
             f"(RestartCount={restart_count}). "
-            "Startup considerato NON valido."
+            "Startup considered INVALID."
         )
 
 
@@ -206,7 +206,7 @@ def get_container_ip():
 
     if proc.returncode != 0:
         raise RuntimeError(
-            "Impossibile leggere IP container: "
+            "Unable to read container IP: "
             + proc.stderr.strip()
         )
 
@@ -214,7 +214,7 @@ def get_container_ip():
 
     if not ip:
         raise RuntimeError(
-            "IP del container non disponibile"
+            "Container IP unavailable"
         )
 
     return ip
@@ -257,7 +257,7 @@ def rcon_command(command):
         ).strip()
 
         raise RuntimeError(
-            "Comando RCON fallito"
+            "RCON command failed"
             + (
                 f": {detail}"
                 if detail
@@ -303,39 +303,38 @@ def get_player_count():
             )
 
     raise RuntimeError(
-        "Formato risposta 'players' "
-        "non riconosciuto. "
-        f"Risposta RCON: {output!r}"
+        "Unrecognized 'players' response format. "
+        f"RCON response: {output!r}"
     )
 
 
 # ------------------------------------------------------------
-# Patch locali
+# Local patches
 # ------------------------------------------------------------
 
 def apply_local_fixes():
     """
-    Esegue apply-local-fixes.py.
+    Run apply-local-fixes.py.
 
     Return:
-      False -> nessun file modificato
-      True  -> patch applicate, serve un nuovo recreate
+      False -> no file changed
+      True  -> patches applied; a new recreate is needed
 
     Exit code patcher:
-      0  = nessuna modifica
-      10 = almeno una modifica
-      altro = errore
+      0  = no changes
+      10 = one or more changes
+      other = error
     """
     if not Path(
         LOCAL_FIXES
     ).is_file():
         raise RuntimeError(
-            f"Patcher locale non trovato: "
+            f"Local patcher not found: "
             f"{LOCAL_FIXES}"
         )
 
     log(
-        "Controllo patch locali post-update..."
+        "Checking local patches after update..."
     )
 
     proc = subprocess.run(
@@ -364,21 +363,21 @@ def apply_local_fixes():
 
     if proc.returncode == 0:
         log(
-            "Patch locali già corrette: "
-            "nessun ulteriore recreate necessario."
+            "Local patches already correct: "
+            "no additional recreate needed."
         )
         return False
 
     if proc.returncode == 10:
         log(
-            "Patch locali applicate: "
-            "serve un ulteriore recreate "
-            "per caricare i file modificati."
+            "Local patches applied: "
+            "an additional recreate is needed "
+            "to load the changed files."
         )
         return True
 
     raise LocalPatchError(
-        "apply-local-fixes.py fallito "
+        "apply-local-fixes.py failed "
         f"(exit code {proc.returncode})"
     )
 
@@ -448,8 +447,8 @@ def wait_for_server_ready(
             )
 
             log(
-                "Project Zomboid pronto via RCON: "
-                f"{players} giocatori connessi."
+                "Project Zomboid ready through RCON: "
+                f"{players} connected players."
             )
 
             return
@@ -471,11 +470,11 @@ def wait_for_server_ready(
             )
 
             log(
-                "Container running con "
-                "RestartCount=0, ma PZ "
-                "non è ancora pronto. "
-                "Attendo RCON... "
-                f"({remaining}s al timeout)"
+                "Container running with "
+                "RestartCount=0, but PZ "
+                "is not ready yet. "
+                "Waiting for RCON... "
+                f"({remaining}s until timeout)"
             )
 
             next_log = (
@@ -487,9 +486,9 @@ def wait_for_server_ready(
         )
 
     raise RuntimeError(
-        "Timeout: Project Zomboid non è "
-        "diventato disponibile via RCON "
-        f"entro {timeout_seconds}s"
+        "Timeout: Project Zomboid did not "
+        "become available through RCON "
+        f"within {timeout_seconds}s"
     )
 
 
@@ -500,8 +499,8 @@ def verify_server_stability(
         stability_seconds = SERVER_STABILITY_SECONDS
 
     log(
-        "RCON operativo. "
-        f"Verifico stabilità per "
+        "RCON is working. "
+        f"Checking stability for "
         f"{stability_seconds}s..."
     )
 
@@ -531,8 +530,8 @@ def verify_server_stability(
             subprocess.TimeoutExpired,
         ) as exc:
             raise RuntimeError(
-                "RCON è diventato non disponibile "
-                "durante il periodo di stabilità: "
+                "RCON became unavailable "
+                "during the stability period: "
                 f"{exc}"
             )
 
@@ -546,11 +545,11 @@ def verify_server_stability(
         )
 
         log(
-            "Stabilità OK: "
+            "Stability OK: "
             f"RestartCount={state['restart_count']}, "
             f"RCON OK, "
             f"players={players}. "
-            f"Restano circa {remaining}s."
+            f"About {remaining}s remaining."
         )
 
         if remaining <= 0:
@@ -576,11 +575,11 @@ def verify_server_stability(
     )
 
     log(
-        "Periodo di stabilità completato: "
+        "Stability period completed: "
         f"RestartCount={state['restart_count']}, "
-        f"RCON operativo, "
+        f"RCON working, "
         f"players={players}, "
-        f"controlli riusciti={consecutive_successes}."
+        f"successful checks={consecutive_successes}."
     )
 
 
@@ -604,8 +603,8 @@ def remove_compose_containers():
 
     if proc.returncode != 0:
         raise RuntimeError(
-            "Impossibile ottenere la lista "
-            "dei container dello stack: "
+            "Unable to obtain the list "
+            "of stack containers: "
             f"{proc.stderr.strip()}"
         )
 
@@ -618,15 +617,15 @@ def remove_compose_containers():
 
     if not container_ids:
         log(
-            "Nessun vecchio container dello "
-            "stack da rimuovere."
+            "No old stack containers "
+            "to remove."
         )
         return
 
     log(
-        "Rimozione esplicita di "
+        "Explicitly removing "
         f"{len(container_ids)} "
-        "container dello stack..."
+        "stack containers..."
     )
 
     rm = subprocess.run(
@@ -656,7 +655,7 @@ def remove_compose_containers():
 
     if rm.returncode != 0:
         raise RuntimeError(
-            "podman rm -f fallito "
+            "podman rm -f failed "
             f"(exit code {rm.returncode})"
         )
 
@@ -684,34 +683,34 @@ def run_systemctl_user(*args):
 
 def recreate_stack():
     """
-    Recreate robusto dello stack:
-      1. stop della unit systemd
-      2. rimozione forzata di eventuali container residui
-      3. start della unit systemd
-      4. se lo start fallisce (es. Podman 125), cleanup + un retry
-      5. verifica running + RestartCount == 0
+    Robust stack recreate:
+      1. stop the systemd unit
+      2. force-remove any remaining containers
+      3. start the systemd unit
+      4. if startup fails (for example Podman 125), clean up and retry once
+      5. verify running + RestartCount == 0
     """
     service = "compose-project-zomboid.service"
 
-    log(f"Stop dello stack tramite systemd: {service}...")
+    log(f"Stopping stack through systemd: {service}...")
     stop = run_systemctl_user("stop", service)
 
     if stop.returncode != 0:
         log(
-            "ATTENZIONE: systemctl --user stop "
-            f"{service} ha restituito exit {stop.returncode}; "
-            "proseguo comunque con la rimozione forzata."
+            "WARNING: systemctl --user stop "
+            f"{service} returned exit {stop.returncode}; "
+            "continuing with force removal anyway."
         )
 
-    # ExecStop usa gia podman-compose down, ma questa rimozione esplicita
-    # e' intenzionale e rende il flusso resiliente a container residui.
+    # ExecStop already uses podman-compose down, but this explicit removal is
+    # intentional and makes the flow resilient to leftover containers.
     remove_compose_containers()
 
     remaining = inspect_container_state()
     if remaining is not None:
         log(
-            "Il container PZ risulta ancora presente; "
-            "forzo la rimozione finale..."
+            "The PZ container is still present; "
+            "forcing final removal..."
         )
         proc = subprocess.run(
             ["podman", "rm", "-f", CONTAINER],
@@ -725,18 +724,18 @@ def recreate_stack():
             print(proc.stderr, end="", file=sys.stderr)
         if proc.returncode != 0:
             raise RuntimeError(
-                "Impossibile rimuovere il vecchio "
+                "Unable to remove the old "
                 f"{CONTAINER}: {(proc.stderr or proc.stdout).strip()}"
             )
 
-    log(f"Avvio nuovo stack tramite systemd: {service}...")
+    log(f"Starting new stack through systemd: {service}...")
     start = run_systemctl_user("start", service)
 
     if start.returncode != 0:
         log(
-            "Primo start systemd fallito "
+            "Initial systemd start failed "
             f"(exit {start.returncode}). "
-            "Eseguo cleanup completo e UN SOLO retry."
+            "Running full cleanup and ONE retry."
         )
 
         remove_compose_containers()
@@ -755,7 +754,7 @@ def recreate_stack():
                 print(proc.stderr, end="", file=sys.stderr)
             if proc.returncode != 0:
                 raise RuntimeError(
-                    "Cleanup recovery fallito: "
+                    "Cleanup recovery failed: "
                     f"{(proc.stderr or proc.stdout).strip()}"
                 )
 
@@ -764,7 +763,7 @@ def recreate_stack():
 
         if start.returncode != 0:
             raise RuntimeError(
-                "Avvio systemd dello stack fallito anche dopo cleanup/retry "
+                "Systemd stack start failed even after cleanup/retry "
                 f"(exit code {start.returncode})"
             )
 
@@ -780,10 +779,10 @@ def recreate_stack():
                 f"restart_count={state['restart_count']}"
             )
         else:
-            detail = "container non presente"
+            detail = "container not found"
 
         raise RuntimeError(
-            "Il container appena creato non e' diventato running: "
+            "The newly created container did not become running: "
             f"{detail}"
         )
 
@@ -792,12 +791,12 @@ def recreate_stack():
     unit_state = run_systemctl_user("is-active", service)
     if unit_state.returncode != 0 or unit_state.stdout.strip() != "active":
         raise RuntimeError(
-            "Il container risulta running ma "
-            f"{service} non risulta active."
+            "The container is running but "
+            f"{service} is not active."
         )
 
     log(
-        "Nuovo container avviato e unit systemd attiva: "
+        "New container started and systemd unit active: "
         f"status={state['status']} "
         f"running={state['running']} "
         f"RestartCount={state['restart_count']}"
@@ -806,20 +805,20 @@ def recreate_stack():
 
 def restart_server():
     """
-    Flusso di ogni tentativo:
+    Flow for each attempt:
 
       1. recreate
-      2. attesa RCON
-      3. applicazione patch locali
-      4. se il patcher cambia file:
-           recreate aggiuntivo
-           attesa RCON
-           nuovo controllo patch
+      2. wait for RCON
+      3. apply local patches
+      4. if the patcher changes files:
+           additional recreate
+           wait for RCON
+           check patches again
       5. stability check
-      6. RestartCount deve restare 0
+      6. RestartCount must remain 0
 
-    Il patcher viene controllato una seconda volta dopo
-    il recreate post-patch per evitare loop silenziosi.
+    The patcher is checked a second time after the post-patch recreate to
+    prevent silent loops.
     """
     last_error = None
 
@@ -834,56 +833,55 @@ def restart_server():
         )
 
         try:
-            # Primo recreate:
-            # qui SteamCMD/PZ può aggiornare i Workshop item.
+            # First recreate:
+            # SteamCMD/PZ may update Workshop items here.
             recreate_stack()
 
             log(
-                "Container ricreato. "
-                "Attendo avvio completo "
-                "di Project Zomboid..."
+                "Container recreated. "
+                "Waiting for Project Zomboid "
+                "to fully start..."
             )
 
             wait_for_server_ready()
 
-            # Ora i file Workshop aggiornati sono presenti
-            # sul disco. Applichiamo eventuali fix locali.
+            # Updated Workshop files are now present on disk.
+            # Apply any local fixes.
             patch_changed = (
                 apply_local_fixes()
             )
 
             if patch_changed:
                 log(
-                    "Le patch locali hanno modificato "
-                    "file Workshop. "
-                    "Eseguo un recreate aggiuntivo "
-                    "per caricare i file corretti."
+                    "Local patches changed "
+                    "Workshop files. "
+                    "Running an additional recreate "
+                    "to load the correct files."
                 )
 
                 recreate_stack()
 
                 log(
-                    "Container ricreato dopo le patch. "
-                    "Attendo nuovamente "
-                    "Project Zomboid..."
+                    "Container recreated after patches. "
+                    "Waiting for Project Zomboid "
+                    "again..."
                 )
 
                 wait_for_server_ready()
 
-                # Controllo importante:
-                # dopo il secondo startup il patcher deve
-                # risultare pulito. Se modifica ancora file,
-                # non continuiamo all'infinito.
+                # Important check: after the second startup, the patcher must
+                # be clean. Do not continue indefinitely if it changes files
+                # again.
                 patch_changed_again = (
                     apply_local_fixes()
                 )
 
                 if patch_changed_again:
                     raise LocalPatchError(
-                        "Le patch locali risultano ancora "
-                        "da applicare dopo il recreate "
-                        "post-patch. "
-                        "Interrompo per evitare un loop."
+                        "Local patches still need to be "
+                        "applied after the post-patch "
+                        "recreate. "
+                        "Stopping to prevent a loop."
                     )
 
             verify_server_stability()
@@ -898,8 +896,8 @@ def restart_server():
 
             log(
                 "Restart attempt "
-                f"{attempt} completato "
-                "con successo e verificato: "
+                f"{attempt} completed "
+                "successfully and verified: "
                 f"RestartCount="
                 f"{state['restart_count']}."
             )
@@ -908,13 +906,13 @@ def restart_server():
 
         except LocalPatchError as exc:
             log(
-                "Errore patch locale NON ritentabile: "
+                "NON-retryable local patch error: "
                 f"{exc}"
             )
 
             log(
-                "Il container resta nello stato corrente. "
-                "Nessun secondo stop/remove/start eseguito."
+                "The container remains in its current state. "
+                "No second stop/remove/start performed."
             )
 
             raise
@@ -924,7 +922,7 @@ def restart_server():
 
             log(
                 "Restart attempt "
-                f"{attempt} fallito: "
+                f"{attempt} failed: "
                 f"{exc}"
             )
 
@@ -935,16 +933,15 @@ def restart_server():
                 break
 
             log(
-                "Eseguo UN SOLO tentativo "
-                "di recovery: rimozione completa "
-                "e nuova creazione del container."
+                "Running ONE recovery attempt: full removal "
+                "and a new container creation."
             )
 
             time.sleep(5)
 
     raise RuntimeError(
-        "Project Zomboid non è riuscito "
-        "ad avviarsi in modo stabile dopo "
-        f"{MAX_START_ATTEMPTS} tentativi. "
-        f"Ultimo errore: {last_error}"
+        "Project Zomboid failed "
+        "to start stably after "
+        f"{MAX_START_ATTEMPTS} attempts. "
+        f"Last error: {last_error}"
     )

@@ -30,20 +30,20 @@ def run(ctx):
     client = root / CLIENT_REL
 
     if not server.is_file() or not client.is_file():
-        log("DoorUnlockFromInside: file v5/v5.2 attesi non trovati; skip.")
+        log("DoorUnlockFromInside: expected v5/v5.2 files not found; skip.")
         return False
 
     s = server.read_text(encoding="utf-8", errors="replace")
     c = client.read_text(encoding="utf-8", errors="replace")
 
     if MARKER in s and MARKER in c:
-        log("DoorUnlockFromInside: patch forceLocked v2 già presente; skip.")
+        log("DoorUnlockFromInside: forceLocked v2 patch already present; skip.")
         return False
 
     # =========================================================
-    # SERVER: ultima barriera di sicurezza.
-    # Non sbloccare porte forceLocked anche se il client
-    # invia esplicitamente DoorUnlock/unlockAt.
+    # SERVER: final safety barrier.
+    # Do not unlock forceLocked doors even if the client explicitly sends
+    # DoorUnlock/unlockAt.
     # =========================================================
 
     server_old = '''            if isDoor or isDoorThump then
@@ -73,8 +73,8 @@ def run(ctx):
 
     # =========================================================
     # CLIENT 1: requestUnlock()
-    # Una square che contiene soltanto una porta forceLocked
-    # non deve generare una richiesta di unlock al server.
+    # A square containing only a forceLocked door must not generate an unlock
+    # request to the server.
     # =========================================================
 
     req_old = '''            if isDoor or isDoorT then hasDoor = true; break end'''
@@ -157,7 +157,7 @@ def run(ctx):
     nc, ok2 = replace_once(nc, sp_old, sp_new)
 
     # =========================================================
-    # CLIENT 3: conferma ricevuta dal server
+    # CLIENT 3: confirmation received from the server
     # =========================================================
 
     sync_old = '''                    if isDoor or isDoorT then
@@ -200,9 +200,8 @@ def run(ctx):
 
     # =========================================================
     # CLIENT 4: ISOpenCloseDoor:perform hook
-    # Questo è particolarmente importante: impedisce al mod di
-    # sbloccare localmente una security door appena prima
-    # dell'apertura.
+    # This is especially important: it prevents the mod from unlocking a
+    # security door locally just before opening it.
     # =========================================================
 
     hook_old = '''                    if indoors then
@@ -269,14 +268,14 @@ def run(ctx):
 
     # =========================================================
     # SAFETY:
-    # tutti i punti devono corrispondere alla versione attesa.
-    # Se ne manca anche uno, non modifichiamo NESSUN file.
+    # all points must match the expected version.
+    # If even one is missing, do not modify ANY file.
     # =========================================================
 
     if not all((ok_s, ok1, ok2, ok3, ok4)):
         log(
-            "DoorUnlockFromInside: ATTENZIONE: sorgente non corrisponde "
-            "esattamente alla v5/v5.2 attesa; nessun file modificato."
+            "DoorUnlockFromInside: WARNING: source does not match "
+            "the expected v5/v5.2 exactly; no file changed."
         )
 
         log(
@@ -287,20 +286,20 @@ def run(ctx):
 
         return False
 
-    # Sanity check ulteriore.
+    # Additional sanity check.
     if ns.count(MARKER) != 1 or nc.count(MARKER) != 4:
         log(
-            "DoorUnlockFromInside: ATTENZIONE: sanity check fallito; "
-            "nessun file modificato."
+            "DoorUnlockFromInside: WARNING: sanity check failed; "
+            "no file changed."
         )
         return False
 
     backup_and_write(server, ns)
     backup_and_write(client, nc)
 
-    log("DoorUnlockFromInside: server v5.2 protetto contro forceLocked.")
-    log("DoorUnlockFromInside: client v5 protetto in request/SP/sync/hook.")
-    log("DoorUnlockFromInside: patch forceLocked v2 completata.")
+    log("DoorUnlockFromInside: server v5.2 protected against forceLocked.")
+    log("DoorUnlockFromInside: client v5 protected in request/SP/sync/hook.")
+    log("DoorUnlockFromInside: forceLocked v2 patch completed.")
 
     return True
 

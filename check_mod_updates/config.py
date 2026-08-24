@@ -30,10 +30,10 @@ LOG_PREFIX = "[PZ-MOD-CHECK]"
 
 class LocalPatchError(RuntimeError):
     """
-    Errore deterministico del patcher locale.
+    Deterministic local patcher error.
 
-    Non deve causare un secondo recreate del server:
-    ripetere stop/remove/start non può risolverlo.
+    It must not cause a second server recreate: repeating stop/remove/start
+    cannot resolve it.
     """
     pass
 
@@ -52,7 +52,7 @@ def log(message):
 
 
 # ------------------------------------------------------------
-# .env / lista mod attiva
+# .env / active mod list
 # ------------------------------------------------------------
 
 def read_env(path):
@@ -60,7 +60,7 @@ def read_env(path):
 
     if not path.is_file():
         raise RuntimeError(
-            f".env non trovato: {path}"
+            f".env not found: {path}"
         )
 
     for raw in path.read_text(
@@ -96,7 +96,7 @@ def required_env(env, key):
 
     if not value:
         raise RuntimeError(
-            f"{key} non presente o vuoto in {ENV_FILE}"
+            f"{key} is missing or empty in {ENV_FILE}"
         )
 
     return value
@@ -109,12 +109,12 @@ def positive_int_env(env, key):
         value = int(raw)
     except ValueError as exc:
         raise RuntimeError(
-            f"{key} deve essere un intero positivo: {raw!r}"
+            f"{key} must be a positive integer: {raw!r}"
         ) from exc
 
     if value <= 0:
         raise RuntimeError(
-            f"{key} deve essere maggiore di zero: {value}"
+            f"{key} must be greater than zero: {value}"
         )
 
     return value
@@ -185,7 +185,7 @@ def get_configured_workshop_ids(env):
 
     if not raw:
         raise RuntimeError(
-            "PZ_MOD_IDS non presente o vuoto nel .env"
+            "PZ_MOD_IDS is missing or empty in .env"
         )
 
     ids = []
@@ -198,7 +198,7 @@ def get_configured_workshop_ids(env):
 
         if not workshop_id.isdigit():
             raise RuntimeError(
-                "Workshop ID non valido in PZ_MOD_IDS: "
+                "Invalid Workshop ID in PZ_MOD_IDS: "
                 f"{workshop_id!r}"
             )
 
@@ -207,7 +207,7 @@ def get_configured_workshop_ids(env):
 
     if not ids:
         raise RuntimeError(
-            "Nessun Workshop ID valido trovato in PZ_MOD_IDS"
+            "No valid Workshop ID found in PZ_MOD_IDS"
         )
 
     return ids

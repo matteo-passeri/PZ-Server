@@ -94,7 +94,7 @@ filter_mod_list () {
 
   IFS=';' read -r -a input <<< "${current}"
 
-  # Mantieni gli elementi correnti tranne quelli blacklistati.
+  # Keep current items except blacklisted ones.
   for item in "${input[@]}"; do
     [ -n "${item}" ] || continue
 
@@ -109,7 +109,7 @@ filter_mod_list () {
 
     [ "${blocked}" -eq 0 ] || continue
 
-    # Evita duplicati.
+    # Avoid duplicates.
     exists=0
 
     for existing in "${output[@]}"; do

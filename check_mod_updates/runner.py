@@ -73,14 +73,13 @@ def main():
 
     if lock_handle is None:
         log(
-            "Un altro controllo è già "
-            "in esecuzione. "
-            "Nessuna azione eseguita."
+            "Another check is already running. "
+            "No action taken."
         )
         return 0
 
     log(
-        f"Lock acquisito: "
+        f"Lock acquired: "
         f"{LOCK_FILE}"
     )
 
@@ -91,14 +90,14 @@ def main():
     )
 
     log(
-        "Workshop item configurati "
-        f"nel .env: {len(active_ids)}"
+        "Workshop items configured "
+        f"in .env: {len(active_ids)}"
     )
 
     if not container_running():
         log(
-            "Container non attivo: "
-            "nessun controllo/restart eseguito."
+            "Container is not running: "
+            "no check or restart performed."
         )
         return 0
 
@@ -122,28 +121,28 @@ def main():
         subprocess.TimeoutExpired,
     ) as exc:
         log(
-            "RCON non disponibile/verificabile: "
+            "RCON unavailable or unverifiable: "
             f"{exc}. "
-            "Controllo rimandato."
+            "Check deferred."
         )
         return 0
 
     log(
-        f"Giocatori connessi: "
+        f"Connected players: "
         f"{players}"
     )
 
     if players > 0:
         log(
-            "Server occupato: "
-            "controllo aggiornamenti rimandato."
+            "Server is occupied: "
+            "update check deferred."
         )
         return 0
 
     log(
-        "Server vuoto. Interrogo Steam "
-        f"per {len(active_ids)} "
-        "Workshop item..."
+        "Server is empty. Querying Steam "
+        f"for {len(active_ids)} "
+        "Workshop items..."
     )
 
     try:
@@ -153,9 +152,9 @@ def main():
 
     except Exception as exc:
         log(
-            "Steam API non disponibile: "
+            "Steam API unavailable: "
             f"{exc}. "
-            "Controllo rimandato."
+            "Check deferred."
         )
         return 0
 
@@ -168,15 +167,14 @@ def main():
         )
 
         log(
-            "Prima esecuzione: "
-            "baseline Workshop creata."
+            "First run: "
+            "Workshop baseline created."
         )
 
         log(
-            "Nessun restart effettuato. "
-            "Da ora verranno rilevati "
-            "solo nuovi cambiamenti "
-            "pubblicati su Steam."
+            "No restart performed. "
+            "From now on, only new changes "
+            "published on Steam will be detected."
         )
 
         return 0
@@ -195,7 +193,7 @@ def main():
         reason,
     ) in inaccessible:
         log(
-            "ATTENZIONE Workshop "
+            "WARNING Workshop "
             f"{workshop_id}: "
             f"{reason}"
         )
@@ -222,9 +220,9 @@ def main():
                 removed_ids
             ):
                 log(
-                    "Rimosso dallo stato "
-                    "Workshop non più "
-                    "configurato: "
+                    "Removed from state, Workshop "
+                    "no longer "
+                    "configured: "
                     f"{workshop_id}"
                 )
 
@@ -234,15 +232,15 @@ def main():
             )
 
         log(
-            "Nessun nuovo aggiornamento "
-            "Workshop disponibile."
+            "No new Workshop update "
+            "available."
         )
 
         return 0
 
     log(
-        f"Trovati {len(updates)} "
-        "Workshop item cambiati:"
+        f"Found {len(updates)} "
+        "changed Workshop items:"
     )
 
     for item in updates:
@@ -263,7 +261,7 @@ def main():
             f"({detail})"
         )
 
-    # Ricontrollo immediatamente prima del restart.
+    # Check again immediately before restart.
     try:
         players, _ = (
             get_player_count()
@@ -274,42 +272,42 @@ def main():
         subprocess.TimeoutExpired,
     ) as exc:
         log(
-            "Restart annullato: "
-            "RCON non verificabile "
+            "Restart cancelled: "
+            "RCON unverifiable "
             f"({exc})."
         )
         return 0
 
     if players > 0:
         log(
-            "Restart annullato: "
-            "nel frattempo sono entrati "
-            f"{players} giocatori."
+            "Restart cancelled: "
+            f"{players} players joined "
+            "in the meantime."
         )
         return 0
 
     restart_server()
 
-    # IMPORTANTISSIMO:
-    # aggiorniamo la baseline solo dopo:
-    # - Workshop aggiornati
-    # - eventuali patch locali
-    # - eventuale recreate post-patch
-    # - RCON operativo
+    # IMPORTANT:
+    # update the baseline only after:
+    # - updated Workshop content
+    # - any local patches
+    # - any post-patch recreate
+    # - working RCON
     # - RestartCount == 0
-    # - stability check completato
+    # - completed stability check
     save_state(
         remote,
         active_ids,
     )
 
     log(
-        "Restart completato e verificato: "
-        "RCON operativo, "
-        "patch locali applicate/verificate, "
-        "container stabile, "
+        "Restart completed and verified: "
+        "RCON is working, "
+        "local patches applied/verified, "
+        "container stable, "
         "RestartCount=0 e "
-        "stato Workshop aggiornato."
+        "Workshop state updated."
     )
 
     return 0
@@ -321,13 +319,13 @@ def run():
 
     except KeyboardInterrupt:
         log(
-            "Interrotto."
+            "Interrupted."
         )
         return 130
 
     except Exception as exc:
         log(
-            f"ERRORE: {exc}"
+            f"ERROR: {exc}"
         )
         return 1
 

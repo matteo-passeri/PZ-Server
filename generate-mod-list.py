@@ -104,7 +104,7 @@ def parse_mod_info(path: Path) -> dict[str, list[str]]:
 
 def read_env(path: Path) -> dict[str, str]:
     if not path.is_file():
-        raise RuntimeError(f".env non trovato: {path}")
+        raise RuntimeError(f".env not found: {path}")
 
     result: dict[str, str] = {}
 
@@ -136,7 +136,7 @@ def required_env(env: dict[str, str], key: str) -> str:
     value = env.get(key, "").strip()
 
     if not value:
-        raise RuntimeError(f"{key} non presente o vuoto in {CONFIG_ENV_FILE}")
+        raise RuntimeError(f"{key} is missing or empty in {CONFIG_ENV_FILE}")
 
     return value
 
@@ -148,11 +148,11 @@ def positive_int_env(env: dict[str, str], key: str) -> int:
         value = int(raw)
     except ValueError as exc:
         raise RuntimeError(
-            f"{key} deve essere un intero positivo: {raw!r}"
+            f"{key} must be a positive integer: {raw!r}"
         ) from exc
 
     if value <= 0:
-        raise RuntimeError(f"{key} deve essere maggiore di zero: {value}")
+        raise RuntimeError(f"{key} must be greater than zero: {value}")
 
     return value
 
@@ -196,7 +196,7 @@ def load_configuration() -> None:
     )
 
     if not managed_keys:
-        raise RuntimeError("PZ_MANAGED_ENV_KEYS non contiene variabili valide")
+        raise RuntimeError("PZ_MANAGED_ENV_KEYS contains no valid variables")
 
     MANAGED_ENV_KEYS = managed_keys
 
@@ -206,18 +206,18 @@ def load_configuration() -> None:
         )
     except json.JSONDecodeError as exc:
         raise RuntimeError(
-            "PZ_MOD_ID_OVERRIDES deve contenere un oggetto JSON valido"
+            "PZ_MOD_ID_OVERRIDES must contain a valid JSON object"
         ) from exc
 
     if not isinstance(overrides, dict):
-        raise RuntimeError("PZ_MOD_ID_OVERRIDES deve essere un oggetto JSON")
+        raise RuntimeError("PZ_MOD_ID_OVERRIDES must be a JSON object")
 
     normalized_overrides: dict[str, list[str]] = {}
 
     for workshop_id, mod_ids in overrides.items():
         if not isinstance(workshop_id, str) or not workshop_id.isdigit():
             raise RuntimeError(
-                "PZ_MOD_ID_OVERRIDES contiene un Workshop ID non valido: "
+                "PZ_MOD_ID_OVERRIDES contains an invalid Workshop ID: "
                 f"{workshop_id!r}"
             )
 
@@ -227,8 +227,8 @@ def load_configuration() -> None:
             or not all(isinstance(mod_id, str) and mod_id for mod_id in mod_ids)
         ):
             raise RuntimeError(
-                "PZ_MOD_ID_OVERRIDES deve associare ogni Workshop ID "
-                "a una lista non vuota di Mod ID"
+                "PZ_MOD_ID_OVERRIDES must map every Workshop ID "
+                "to a non-empty Mod ID list"
             )
 
         normalized_overrides[workshop_id] = mod_ids
@@ -238,26 +238,26 @@ def load_configuration() -> None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Genera e aggiorna la configurazione mod di Project Zomboid da una o piu collection Steam."
+        description="Generate and update Project Zomboid mod configuration from one or more Steam collections."
     )
     p.add_argument(
         "collection_ids",
         nargs="*",
         metavar="collection_id",
-        help="Uno o piu ID collection; ogni argomento puo contenere ID separati da virgole.",
+        help="One or more collection IDs; each argument may contain comma-separated IDs.",
     )
     p.add_argument("--output-dir", type=Path, default=SCRIPT_DIR)
     p.add_argument("--env-file", type=Path, default=CONFIG_ENV_FILE)
-    p.add_argument("--strict", action="store_true", help="Exit 2 se trova problemi seri")
-    p.add_argument("--no-env-update", action="store_true", help="Non modificare .env")
+    p.add_argument("--strict", action="store_true", help="Exit 2 when serious issues are found")
+    p.add_argument("--no-env-update", action="store_true", help="Do not modify .env")
     p.add_argument("--no-backup", action="store_true")
     p.add_argument(
         "--workshop-root",
         type=Path,
         default=DEFAULT_WORKSHOP_ROOT,
         help=(
-            "Directory locale steamapps/workshop/content/108600 "
-            "usata come fallback per leggere mod.info"
+            "Local steamapps/workshop/content/108600 directory "
+            "used as a fallback to read mod.info"
         ),
     )
     return p.parse_args()
@@ -273,7 +273,7 @@ def normalize_collection_ids(raw_values: list[str]) -> list[str]:
 
             if not collection_id or not collection_id.isdigit():
                 raise ValueError(
-                    "collection ID deve essere numerico: "
+                    "collection ID must be numeric: "
                     f"{collection_id or raw_value!r}"
                 )
 
@@ -281,7 +281,7 @@ def normalize_collection_ids(raw_values: list[str]) -> list[str]:
                 collection_ids.append(collection_id)
 
     if not collection_ids:
-        raise ValueError("specificare almeno una collection ID")
+        raise ValueError("specify at least one collection ID")
 
     return collection_ids
 
@@ -311,7 +311,7 @@ def now_utc() -> str:
 
 
 def prune_backups(path: Path, keep: int = BACKUPS_TO_KEEP) -> None:
-    """Mantiene solo gli ultimi `keep` backup per il file indicato."""
+    """Keep only the latest `keep` backups for the specified file."""
     backups = sorted(
         path.parent.glob(f"{path.name}.*.bak"),
         key=lambda p: p.stat().st_mtime,
@@ -323,7 +323,7 @@ def prune_backups(path: Path, keep: int = BACKUPS_TO_KEEP) -> None:
             old.unlink()
         except OSError as exc:
             print(
-                f"ATTENZIONE: impossibile eliminare vecchio backup {old}: {exc}",
+                f"WARNING: unable to delete old backup {old}: {exc}",
                 file=sys.stderr,
             )
 
@@ -368,7 +368,7 @@ def post_json(
             if r.status_code == 429:
                 delay = min(5 * attempt, 45)
                 print(
-                    f"Steam rate limit; nuovo tentativo tra {delay}s...",
+                    f"Steam rate limit; retrying in {delay}s...",
                     file=sys.stderr,
                 )
                 time.sleep(delay)
@@ -379,7 +379,7 @@ def post_json(
             obj = r.json()
 
             if not isinstance(obj, dict):
-                raise SteamAPIError("Risposta JSON non valida")
+                raise SteamAPIError("Invalid JSON response")
 
             return obj
 
@@ -392,13 +392,13 @@ def post_json(
             delay = min(3 * attempt, 30)
 
             print(
-                f"Errore temporaneo: {exc}; nuovo tentativo tra {delay}s...",
+                f"Temporary error: {exc}; retrying in {delay}s...",
                 file=sys.stderr,
             )
 
             time.sleep(delay)
 
-    raise SteamAPIError(f"Richiesta Steam fallita: {last}")
+    raise SteamAPIError(f"Steam request failed: {last}")
 
 
 def get_collection(
@@ -425,13 +425,13 @@ def get_collection(
     )
 
     if not details:
-        raise SteamAPIError("Collection non restituita da Steam")
+        raise SteamAPIError("Collection not returned by Steam")
 
     collection = details[0]
 
     if int(collection.get("result", 0)) != 1:
         raise SteamAPIError(
-            f"Collection non accessibile, result={collection.get('result')}"
+            f"Collection inaccessible, result={collection.get('result')}"
         )
 
     raw = [
@@ -604,7 +604,7 @@ def extract_map_names(
 
 
 def read_mod_id_from_info(path: Path) -> str | None:
-    """Legge il primo id= valido da un file mod.info."""
+    """Read the first valid id= from a mod.info file."""
     mod_ids = parse_mod_info(path)["id"]
     if not mod_ids:
         return None
@@ -761,12 +761,12 @@ def mod_info_rank(
     mod_root: Path,
 ) -> tuple[int, str]:
     """
-    Preferenza per B42.20:
+    B42.20 preference:
       0 -> .../42.20/mod.info
       1 -> .../42/mod.info
-      2 -> .../mod.info non versionato
-      3 -> altre directory 42.x
-      4 -> tutto il resto (es. 41)
+      2 -> .../mod.info without a version directory
+      3 -> other 42.x directories
+      4 -> everything else (for example 41)
     """
     try:
         rel = path.relative_to(mod_root)
@@ -797,12 +797,12 @@ def extract_local_mod_ids(
     workshop_id: str,
 ) -> list[str]:
     """
-    Ricava i Mod ID dai mod.info locali di un Workshop item.
+    Extract Mod IDs from a Workshop item's local mod.info files.
 
-    Ogni directory mods/<nome-mod> viene trattata separatamente,
-    così un Workshop item che contiene più mod continua a produrre
-    più Mod ID. Per ciascun mod viene scelta una sola variante,
-    preferendo 42.20, poi 42, poi quella non versionata.
+    Each mods/<mod-name> directory is handled separately, so a Workshop item
+    containing multiple mods continues to produce multiple Mod IDs. One
+    variant is selected for each mod, preferring 42.20, then 42, then the
+    unversioned variant.
     """
     item_root = workshop_root / workshop_id
     mods_root = item_root / "mods"
@@ -833,8 +833,8 @@ def extract_local_mod_ids(
             mod_root,
         )[0]
 
-        # Se esistono solo varianti incompatibili/non riconosciute
-        # (tipicamente B41), non le usiamo come fallback automatico.
+        # If only incompatible or unrecognized variants exist (typically B41),
+        # do not use them as an automatic fallback.
         if best_rank >= 4:
             continue
 
@@ -877,7 +877,7 @@ def suspicious_build(
 
     if b41 and not b42:
         warnings.append(
-            "sembra destinata esclusivamente a Build 41"
+            "appears intended exclusively for Build 41"
         )
 
     if (
@@ -885,7 +885,7 @@ def suspicious_build(
         or "deprecated" in title.lower()
     ):
         warnings.append(
-            "titolo marcato obsolete/deprecated"
+            "title marked obsolete/deprecated"
         )
 
     return warnings
@@ -994,7 +994,7 @@ def main() -> int:
         )
     except ValueError as exc:
         print(
-            f"ERRORE: {exc}",
+            f"ERROR: {exc}",
             file=sys.stderr,
         )
         return 1
@@ -1038,11 +1038,11 @@ def main() -> int:
 
     if workshop_root.is_dir():
         print(
-            f"Workshop locale fallback: {workshop_root}"
+            f"Local Workshop fallback: {workshop_root}"
         )
     else:
         print(
-            "ATTENZIONE: Workshop locale fallback non disponibile: "
+            "WARNING: local Workshop fallback unavailable: "
             f"{workshop_root}",
             file=sys.stderr,
         )
@@ -1085,7 +1085,7 @@ def main() -> int:
 
     for collection_id in selected_collection_ids:
         print(
-            f"Lettura collection Steam {collection_id}..."
+            f"Reading Steam collection {collection_id}..."
         )
 
         (
@@ -1097,7 +1097,7 @@ def main() -> int:
         )
 
         print(
-            "Workshop Item unici nella collection: "
+            "Unique Workshop items in collection: "
             f"{len(current_collection_ids)}"
         )
 
@@ -1216,9 +1216,8 @@ def main() -> int:
             desc,
         )
 
-        # Fallback manuale:
-        # se Steam non espone un Mod ID leggibile nella descrizione,
-        # usa gli override definiti a inizio script.
+        # Manual fallback: if Steam does not expose a readable Mod ID in the
+        # description, use the overrides defined at the top of the script.
         if (
             not mids
             and wid in MOD_ID_OVERRIDES
@@ -1228,14 +1227,14 @@ def main() -> int:
             )
 
             print(
-                f"Override Mod ID applicato: "
+                f"Applied Mod ID override: "
                 f"{wid} ({title}) -> "
                 f"{', '.join(mids)}"
             )
 
-        # Fallback locale:
-        # alcuni Workshop item (es. Proper Pickaxe) non pubblicano
-        # "Mod ID:" nella descrizione Steam, ma hanno un mod.info valido.
+        # Local fallback: some Workshop items (for example Proper Pickaxe) do
+        # not publish "Mod ID:" in the Steam description but have a valid
+        # mod.info.
         if (
             not mids
             and workshop_root.is_dir()
@@ -1249,7 +1248,7 @@ def main() -> int:
                 mids = local_mids
 
                 print(
-                    f"Mod ID letto da mod.info locale: "
+                    f"Mod ID read from local mod.info: "
                     f"{wid} ({title}) -> "
                     f"{', '.join(mids)}"
                 )
@@ -1385,7 +1384,7 @@ def main() -> int:
     try:
         mod_ids = reorder_mod_ids(mod_ids)
     except ModLoadOrderError as exc:
-        print(f"ERRORE: {exc}", file=sys.stderr)
+        print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
     load_order_adjustments = mod_load_order_adjustments(
@@ -1476,9 +1475,9 @@ def main() -> int:
     }
 
     generated_env = "\n".join([
-        "# Generato automaticamente da generate-mod-list.py",
+        "# Automatically generated by generate-mod-list.py",
         f"# Collection Steam: {collections_display}",
-        f"# Generato UTC: {generated}",
+        f"# Generated UTC: {generated}",
         *(
             f"{k}={dotenv_quote(v)}"
             for k, v in env_values.items()
@@ -1490,68 +1489,68 @@ def main() -> int:
         "PROJECT ZOMBOID MOD COLLECTION REPORT",
         "=" * 38,
         "",
-        f"Generato UTC: {generated}",
+        f"Generated UTC: {generated}",
         f"Collection: {collections_display}",
         (
-            "Collection mappe: "
-            + (", ".join(map_collection_ids) or "Nessuna")
+            "Map collections: "
+            + (", ".join(map_collection_ids) or "None")
         ),
         (
-            "Collection caricate per ultime: "
-            + (", ".join(last_to_load_collection_ids) or "Nessuna")
+            "Collections loaded last: "
+            + (", ".join(last_to_load_collection_ids) or "None")
         ),
-        f"Workshop validi: {len(workshop_ids)}",
-        f"Mod ID unici: {len(mod_ids)}",
-        f"Mappe moddate: {len(map_names)}",
-        f"Rimossi/non accessibili: {len(removed)}",
-        f"Senza Mod ID: {len(missing_mod_id)}",
-        f"Mod ID duplicati: {len(duplicate_mod_ids)}",
-        f"Mappe duplicate: {len(duplicate_maps)}",
+        f"Valid Workshop items: {len(workshop_ids)}",
+        f"Unique Mod IDs: {len(mod_ids)}",
+        f"Modded maps: {len(map_names)}",
+        f"Removed/inaccessible: {len(removed)}",
+        f"Without Mod ID: {len(missing_mod_id)}",
+        f"Duplicate Mod IDs: {len(duplicate_mod_ids)}",
+        f"Duplicate maps: {len(duplicate_maps)}",
         "",
-        "CAMBIAMENTI DALLA PRECEDENTE ESECUZIONE",
+        "CHANGES SINCE PREVIOUS RUN",
         "-" * 39,
         (
-            "Workshop aggiunti: "
+            "Workshop items added: "
             + (
                 ", ".join(
                     changes[
                         "added_workshop_ids"
                     ]
                 )
-                or "Nessuno"
+                or "None"
             )
         ),
         (
-            "Workshop rimossi: "
+            "Workshop items removed: "
             + (
                 ", ".join(
                     changes[
                         "removed_workshop_ids"
                     ]
                 )
-                or "Nessuno"
+                or "None"
             )
         ),
         (
-            "Mod ID aggiunti: "
+            "Mod IDs added: "
             + (
                 ", ".join(
                     changes[
                         "added_mod_ids"
                     ]
                 )
-                or "Nessuno"
+                or "None"
             )
         ),
         (
-            "Mod ID rimossi: "
+            "Mod IDs removed: "
             + (
                 ", ".join(
                     changes[
                         "removed_mod_ids"
                     ]
                 )
-                or "Nessuno"
+                or "None"
             )
         ),
         "",
@@ -1567,18 +1566,18 @@ def main() -> int:
         ])
 
         report.extend(
-            lines or ["Nessuno"]
+            lines or ["None"]
         )
 
         report.append("")
 
     section(
-        "ELEMENTI RIMOSSI O NON ACCESSIBILI",
+        "REMOVED OR INACCESSIBLE ITEMS",
         removed,
     )
 
     section(
-        "ELEMENTI SENZA MOD ID",
+        "ITEMS WITHOUT MOD ID",
         [
             f'{x["workshop_id"]}: {x["title"]}'
             for x in missing_mod_id
@@ -1586,7 +1585,7 @@ def main() -> int:
     )
 
     section(
-        "MOD ID DUPLICATI",
+        "DUPLICATE MOD IDS",
         [
             (
                 f"{mid}: "
@@ -1606,7 +1605,7 @@ def main() -> int:
     )
 
     section(
-        "MAPPE DUPLICATE",
+        "DUPLICATE MAPS",
         [
             (
                 f"{name}: "
@@ -1621,7 +1620,7 @@ def main() -> int:
     )
 
     section(
-        "POSSIBILI MOD B41/OBSOLETE",
+        "POSSIBLE B41/OBSOLETE MODS",
         [
             (
                 f'{x["workshop_id"]}: '
@@ -1633,7 +1632,7 @@ def main() -> int:
     )
 
     section(
-        "VALORI MALFORMATI",
+        "MALFORMED VALUES",
         [
             (
                 f'{x["workshop_id"]}: '
@@ -1694,7 +1693,7 @@ def main() -> int:
         )
 
     print(
-        "\nGenerazione completata:"
+        "\nGeneration complete:"
     )
 
     print(
@@ -1715,7 +1714,7 @@ def main() -> int:
 
     if not args.no_env_update:
         print(
-            f"  .env:    {env_path} aggiornato"
+            f"  .env:    {env_path} updated"
         )
 
         if env_backup:
@@ -1724,23 +1723,23 @@ def main() -> int:
             )
 
     print(
-        f"\nWorkshop validi: {len(workshop_ids)}"
+        f"\nValid Workshop items: {len(workshop_ids)}"
     )
 
     print(
-        f"Mod ID unici: {len(mod_ids)}"
+        f"Unique Mod IDs: {len(mod_ids)}"
     )
 
     print(
-        f"Rimossi/non accessibili: {len(removed)}"
+        f"Removed/inaccessible: {len(removed)}"
     )
 
     print(
-        f"Senza Mod ID: {len(missing_mod_id)}"
+        f"Without Mod ID: {len(missing_mod_id)}"
     )
 
     print(
-        f"Mod ID duplicati: {len(duplicate_mod_ids)}"
+        f"Duplicate Mod IDs: {len(duplicate_mod_ids)}"
     )
 
     serious = bool(
@@ -1755,7 +1754,7 @@ def main() -> int:
         and serious
     ):
         print(
-            "Modalità strict: rilevati problemi da correggere.",
+            "Strict mode: issues requiring correction detected.",
             file=sys.stderr,
         )
         return 2
@@ -1771,7 +1770,7 @@ if __name__ == "__main__":
 
     except KeyboardInterrupt:
         print(
-            "\nInterrotto.",
+            "\nInterrupted.",
             file=sys.stderr,
         )
 
@@ -1779,7 +1778,7 @@ if __name__ == "__main__":
 
     except Exception as exc:
         print(
-            f"ERRORE: {exc}",
+            f"ERROR: {exc}",
             file=sys.stderr,
         )
 

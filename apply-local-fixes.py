@@ -24,7 +24,7 @@ LOG_PREFIX = "[PZ-LOCAL-FIX]"
 
 def read_env(path):
     if not path.is_file():
-        raise RuntimeError(f".env non trovato: {path}")
+        raise RuntimeError(f".env not found: {path}")
 
     result = {}
 
@@ -56,7 +56,7 @@ def configured_path(env, key):
     value = env.get(key, "").strip()
 
     if not value:
-        raise RuntimeError(f"{key} non presente o vuoto in {ENV_FILE}")
+        raise RuntimeError(f"{key} is missing or empty in {ENV_FILE}")
 
     return Path(value).expanduser()
 
@@ -65,7 +65,7 @@ def required_env(env, key):
     value = env.get(key, "").strip()
 
     if not value:
-        raise RuntimeError(f"{key} non presente o vuoto in {ENV_FILE}")
+        raise RuntimeError(f"{key} is missing or empty in {ENV_FILE}")
 
     return value
 
@@ -114,9 +114,9 @@ def sha256(path):
 
 def ensure_symlink(source, destination, link_target=None):
     """
-    Crea o ripristina un symlink senza sovrascrivere contenuto reale.
+    Create or restore a symlink without overwriting real content.
 
-    Restituisce uno stato tra: created, present, replaced, blocked,
+    Returns one of: created, present, replaced, blocked,
     source_missing.
     """
     if link_target is None:
@@ -210,30 +210,30 @@ def save_state(state):
 
 # ------------------------------------------------------------
 # Fix 1:
-# Build 42 usa Base.LimestoneCrushed.
+# Build 42 uses Base.LimestoneCrushed.
 #
-# Alcune mod continuano a usare Base.CrushedLimestone.
+# Some mods still use Base.CrushedLimestone.
 #
-# Cerchiamo SOLO sotto media/scripts, quindi non tocchiamo
-# le traduzioni ItemName_Base.CrushedLimestone.
+# Search ONLY under media/scripts, so ItemName_Base.CrushedLimestone
+# translations are left untouched.
 # ------------------------------------------------------------
 
 def discover_fix_scripts():
     """
-    Carica i fix esterni in ordine alfabetico.
+    Load external fixes in alphabetical order.
 
-    Ogni file *.py in fix-scripts deve esportare:
+    Every *.py file in fix-scripts must export:
         FIX = {
-            "name": "nome leggibile",
+            "name": "human-readable name",
             "run": callable,
         }
 
-    La callable riceve un unico argomento `ctx`, un dizionario
-    contenente helper, costanti e stato condiviso.
+    The callable receives one `ctx` argument, a dictionary containing
+    helpers, constants, and shared state.
     """
     if not FIX_SCRIPTS_DIR.is_dir():
         raise RuntimeError(
-            f"Cartella fix-scripts non presente: {FIX_SCRIPTS_DIR}"
+            f"fix-scripts directory not found: {FIX_SCRIPTS_DIR}"
         )
 
     import importlib.util
@@ -257,7 +257,7 @@ def discover_fix_scripts():
 
         if spec is None or spec.loader is None:
             raise RuntimeError(
-                f"Impossibile caricare fix script: {path}"
+                f"Unable to load fix script: {path}"
             )
 
         module = importlib.util.module_from_spec(spec)
@@ -267,7 +267,7 @@ def discover_fix_scripts():
 
         if not isinstance(fix, dict):
             raise RuntimeError(
-                f"{path.name}: variabile FIX mancante/non valida."
+                f"{path.name}: FIX variable is missing or invalid."
             )
 
         name = fix.get("name", path.stem)
@@ -275,7 +275,7 @@ def discover_fix_scripts():
 
         if not callable(run):
             raise RuntimeError(
-                f"{path.name}: FIX['run'] non è callable."
+                f"{path.name}: FIX['run'] is not callable."
             )
 
         fixes.append((name, path, run))
@@ -305,10 +305,10 @@ def main():
     fixes = discover_fix_scripts()
 
     if not fixes:
-        log("Nessun fix trovato in fix-scripts.")
+        log("No fixes found in fix-scripts.")
 
     for name, path, run in fixes:
-        log(f"Eseguo fix: {name} ({path.name})")
+        log(f"Running fix: {name} ({path.name})")
 
         if run(ctx):
             changed = True
@@ -328,9 +328,9 @@ if __name__ == "__main__":
         sys.exit(main())
 
     except KeyboardInterrupt:
-        log("Interrotto.")
+        log("Interrupted.")
         sys.exit(130)
 
     except Exception as exc:
-        log(f"ERRORE: {exc}")
+        log(f"ERROR: {exc}")
         sys.exit(1)

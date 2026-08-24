@@ -58,7 +58,7 @@ services:
       - "16261:16261/udp"
       - "16262:16262/udp"
 
-      # RCON raggiungibile solo dal server host.
+      # RCON reachable only from the host server.
       - "127.0.0.1:${PZ_RCON_PORT}:${PZ_RCON_PORT}/tcp"
 
     stop_grace_period: 90s

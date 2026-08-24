@@ -115,7 +115,7 @@ def find_updates(
             inaccessible.append(
                 (
                     workshop_id,
-                    "nessuna risposta da Steam",
+                    "no response from Steam",
                 )
             )
             continue
@@ -149,7 +149,7 @@ def find_updates(
             inaccessible.append(
                 (
                     workshop_id,
-                    "time_updated remoto non valido",
+                    "invalid remote time_updated",
                 )
             )
             continue
@@ -163,12 +163,12 @@ def find_updates(
                 "id": workshop_id,
                 "title": info.get(
                     "title",
-                    "(senza nome)",
+                    "(unnamed)",
                 ),
                 "old": None,
                 "new": remote_time,
                 "reason":
-                    "nuovo Workshop item",
+                    "new Workshop item",
             })
             continue
 
@@ -191,7 +191,7 @@ def find_updates(
                 "id": workshop_id,
                 "title": info.get(
                     "title",
-                    "(senza nome)",
+                    "(unnamed)",
                 ),
                 "old": old_time,
                 "new": remote_time,

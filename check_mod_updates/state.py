@@ -5,7 +5,7 @@ from . import config
 
 
 # ------------------------------------------------------------
-# Stato persistente
+# Persistent state
 # ------------------------------------------------------------
 
 def load_state():
@@ -24,12 +24,12 @@ def load_state():
         ValueError,
     ) as exc:
         raise RuntimeError(
-            f"Impossibile leggere {config.STATE_FILE}: {exc}"
+            f"Unable to read {config.STATE_FILE}: {exc}"
         )
 
     if not isinstance(payload, dict):
         raise RuntimeError(
-            f"Formato stato non valido: {config.STATE_FILE}"
+            f"Invalid state format: {config.STATE_FILE}"
         )
 
     items = payload.get(
@@ -39,7 +39,7 @@ def load_state():
 
     if not isinstance(items, dict):
         raise RuntimeError(
-            f"Formato items non valido: {config.STATE_FILE}"
+            f"Invalid items format: {config.STATE_FILE}"
         )
 
     return payload
@@ -85,7 +85,7 @@ def save_state(
             "time_updated": remote_time,
             "title": info.get(
                 "title",
-                "(senza nome)",
+                    "(unnamed)",
             ),
         }
 

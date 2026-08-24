@@ -25,7 +25,7 @@ def run(ctx):
 
     if not root.is_dir():
         log(
-            "CompanionDogs: mod non presente; skip."
+            "CompanionDogs: mod not present; skip."
         )
         return False
 
@@ -68,8 +68,8 @@ def run(ctx):
         if not src.is_file():
             log(
                 "CompanionDogs: "
-                f"{filename} non esiste più "
-                "nel client. Non applico la patch."
+                f"{filename} no longer exists "
+                "in the client. Patch not applied."
             )
 
             managed.pop(
@@ -85,9 +85,8 @@ def run(ctx):
             key
         )
 
-        # Nessuna destinazione:
-        # probabilmente Workshop ha rimosso il nostro file
-        # durante l'update. Lo ricreiamo.
+        # No destination: Workshop likely removed our file during the update.
+        # Recreate it.
         if not dst.exists():
             shared_dir.mkdir(
                 parents=True,
@@ -108,7 +107,7 @@ def run(ctx):
             }
 
             log(
-                "CompanionDogs: creata copia shared "
+                "CompanionDogs: created shared copy "
                 f"{filename}."
             )
 
@@ -117,14 +116,14 @@ def run(ctx):
 
         dst_hash = sha256(dst)
 
-        # Non abbiamo mai registrato questo file come nostro.
+        # We have never recorded this file as ours.
         #
-        # Non lo tocchiamo: potrebbe essere una futura
-        # implementazione ufficiale dell'autore.
+        # Leave it untouched: it could be a future official implementation
+        # from the author.
         if previous is None:
             if dst_hash == src_hash:
-                # È molto probabilmente la copia che avevamo
-                # creato prima di introdurre questo patcher.
+                # This is very likely the copy we created before introducing
+                # this patcher.
                 managed[key] = {
                     "sha256": dst_hash,
                     "source_sha256":
@@ -133,17 +132,17 @@ def run(ctx):
 
                 log(
                     "CompanionDogs: "
-                    f"{filename} già presente "
-                    "e identico al client; "
-                    "adottato come file gestito."
+                    f"{filename} already present "
+                    "and identical to the client; "
+                    "adopted as a managed file."
                 )
 
             else:
                 log(
                     "CompanionDogs: "
-                    f"{filename} esiste già in shared "
-                    "ma non è gestito dal patcher. "
-                    "Presumo fix upstream; NON sovrascrivo."
+                    f"{filename} already exists in shared "
+                    "but is not managed by the patcher. "
+                    "Assuming an upstream fix; NOT overwriting."
                 )
 
             continue
@@ -152,21 +151,19 @@ def run(ctx):
             "sha256"
         )
 
-        # Il file shared è cambiato rispetto a quello
-        # che avevamo scritto noi.
+        # The shared file changed from the one we wrote.
         #
-        # Potrebbe essere un aggiornamento ufficiale:
-        # smettiamo immediatamente di gestirlo.
+        # It could be an official update: stop managing it immediately.
         if (
             previous_hash
             and dst_hash != previous_hash
         ):
             log(
                 "CompanionDogs: "
-                f"{filename} shared è stato modificato "
-                "da qualcosa di esterno. "
-                "Presumo implementazione upstream; "
-                "smetto di gestirlo."
+                f"{filename} shared was modified "
+                "by something external. "
+                "Assuming an upstream implementation; "
+                "stopping management."
             )
 
             managed.pop(
@@ -176,8 +173,7 @@ def run(ctx):
 
             continue
 
-        # La sorgente client non è cambiata:
-        # niente da fare.
+        # The client source has not changed: nothing to do.
         if dst_hash == src_hash:
             managed[key] = {
                 "sha256": dst_hash,
@@ -187,9 +183,8 @@ def run(ctx):
 
             continue
 
-        # Il file è ancora chiaramente il nostro,
-        # ma il client è stato aggiornato.
-        # Aggiorniamo anche la copia shared.
+        # The file is still clearly ours, but the client was updated.
+        # Update the shared copy as well.
         shutil.copy2(
             src,
             dst,
@@ -205,8 +200,8 @@ def run(ctx):
 
         log(
             "CompanionDogs: "
-            f"{filename} client aggiornato; "
-            "copia shared sincronizzata."
+            f"{filename} client updated; "
+            "shared copy synchronized."
         )
 
         changed = True
