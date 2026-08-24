@@ -12,10 +12,7 @@ def ensure_targeted_alias(log, source, destination, link_target, label):
 
     if destination.is_symlink():
         try:
-            if (
-                destination.readlink() == link_target
-                and destination.samefile(source)
-            ):
+            if destination.samefile(source):
                 return "present"
         except OSError:
             pass

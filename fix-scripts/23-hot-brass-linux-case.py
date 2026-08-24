@@ -21,7 +21,7 @@ def select_active_b42_tree(mod_root):
     """Return one B42 tree with AnimSets, never patching obsolete versions."""
     candidates = []
     if (mod_root / "media" / "AnimSets").is_dir():
-        candidates.append(((2, ""), mod_root))
+        candidates.append(((4, ""), mod_root))
 
     for path in mod_root.iterdir():
         if path.is_dir() and (path / "media" / "AnimSets").is_dir():
@@ -43,10 +43,7 @@ def ensure_alias(source, destination, link_target):
 
     if destination.is_symlink():
         try:
-            if (
-                destination.readlink() == link_target
-                and destination.samefile(source)
-            ):
+            if destination.samefile(source):
                 return "present"
         except OSError:
             pass
