@@ -1,4 +1,5 @@
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -58,6 +59,78 @@ class CollectionSelectionTests(unittest.TestCase):
         )
 
         self.assertEqual(collection_ids, ["30", "20", "40", "10", "50"])
+
+
+class ModLoadOrderTests(unittest.TestCase):
+    def test_incorrect_marz_order_is_repaired(self) -> None:
+        self.assertEqual(
+            GENERATOR.reorder_mod_ids(
+                ["A", "MarzVanillaGuns", "SWMG", "HBVCEFb42", "B"]
+            ),
+            ["A", "HBVCEFb42", "SWMG", "MarzVanillaGuns", "B"],
+        )
+
+    def test_missing_mods_skip_their_rules(self) -> None:
+        self.assertEqual(
+            GENERATOR.reorder_mod_ids(["A", "B"]),
+            ["A", "B"],
+        )
+
+    def test_correct_order_is_unchanged(self) -> None:
+        mod_ids = [
+            "A",
+            "HBVCEFb42",
+            "SWMG",
+            "MarzVanillaGuns",
+            "B",
+        ]
+        self.assertEqual(GENERATOR.reorder_mod_ids(mod_ids), mod_ids)
+
+    def test_contradictory_rules_raise_a_clear_error(self) -> None:
+        with self.assertRaisesRegex(
+            GENERATOR.ModLoadOrderError,
+            r"cycle: A -> B -> A",
+        ):
+            GENERATOR.reorder_mod_ids(
+                ["A", "B"],
+                load_before=[("A", "B"), ("B", "A")],
+                load_after=[],
+            )
+
+    def test_unrelated_ids_keep_their_relative_order(self) -> None:
+        result = GENERATOR.reorder_mod_ids(
+            ["A", "MarzVanillaGuns", "B", "SWMG", "C", "HBVCEFb42", "D"]
+        )
+        unrelated = [mod_id for mod_id in result if mod_id in {"A", "B", "C", "D"}]
+        self.assertEqual(unrelated, ["A", "B", "C", "D"])
+
+    def test_reordering_is_idempotent(self) -> None:
+        first = GENERATOR.reorder_mod_ids(
+            ["A", "MarzVanillaGuns", "SWMG", "HBVCEFb42", "B"]
+        )
+        self.assertEqual(GENERATOR.reorder_mod_ids(first), first)
+
+class ModInfoParsingTests(unittest.TestCase):
+    def test_order_metadata_normalizes_one_accidental_leading_backslash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "mod.info"
+            path.write_text(
+                "id=ExampleMod\n"
+                "loadModAfter=\\HBVCEFb42\n"
+                "loadModBefore=\\NeatUI_Framework\n"
+                "require=\\VehicleRepairOverhaul;OtherMod\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                GENERATOR.parse_mod_info(path),
+                {
+                    "id": ["ExampleMod"],
+                    "loadmodafter": ["HBVCEFb42"],
+                    "loadmodbefore": ["NeatUI_Framework"],
+                    "require": ["VehicleRepairOverhaul", "OtherMod"],
+                },
+            )
 
 
 if __name__ == "__main__":

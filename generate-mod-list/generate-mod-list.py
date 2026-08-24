@@ -30,9 +30,68 @@ BACKUPS_TO_KEEP = None
 DEFAULT_WORKSHOP_ROOT = None
 MOD_ID_OVERRIDES = None
 
-
+# Hard Mod ID load-order rules.  These affect PZ_MOD_NAMES (the server Mods=
+# value), never PZ_MOD_IDS (the WorkshopItems= value).
+#
+# Add a pair here when the first Mod ID must load before the second.  Add a
+# pair to MOD_LOAD_AFTER when the first Mod ID must load after the second.
+MOD_LOAD_BEFORE = [
+    ("HBVCEFb42", "SWMG"),
+]
+MOD_LOAD_AFTER = [
+    ("SWMG", "HBVCEFb42"),
+    ("MarzVanillaGuns", "SWMG"),
+    ("MarzVanillaGuns", "HBVCEFb42"),
+]
 class SteamAPIError(RuntimeError):
     pass
+
+
+class ModLoadOrderError(RuntimeError):
+    """Raised when active hard Mod ID ordering rules are contradictory."""
+
+
+def normalize_mod_info_order_value(value: str) -> str:
+    """Remove one accidental leading backslash from mod.info order metadata."""
+    return value[1:] if value.startswith("\\") else value
+
+
+def parse_mod_info(path: Path) -> dict[str, list[str]]:
+    """Read selected mod.info fields, retaining their declared value order."""
+    fields = {
+        "id": [],
+        "loadmodafter": [],
+        "loadmodbefore": [],
+        "require": [],
+    }
+
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return fields
+
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip().lower()
+        if key not in fields:
+            continue
+
+        # PZ commonly separates multi-value metadata fields with semicolons.
+        # This metadata is only inspected for now; require= does not create an
+        # automatic load-order edge.  An id= value itself remains singular.
+        values = [value] if key == "id" else value.split(";")
+        for item in values:
+            item = item.strip()
+            if key != "id":
+                item = normalize_mod_info_order_value(item)
+            if item and item not in fields[key]:
+                fields[key].append(item)
+
+    return fields
 
 
 def read_env(path: Path) -> dict[str, str]:
@@ -538,42 +597,155 @@ def extract_map_names(
 
 def read_mod_id_from_info(path: Path) -> str | None:
     """Legge il primo id= valido da un file mod.info."""
-    try:
-        lines = path.read_text(
-            encoding="utf-8",
-            errors="replace",
-        ).splitlines()
-    except OSError:
+    mod_ids = parse_mod_info(path)["id"]
+    if not mod_ids:
         return None
 
-    for raw in lines:
-        line = raw.strip()
+    mod_id = mod_ids[0]
 
+    if ";" in mod_id or "\n" in mod_id or len(mod_id) > 200:
+        return None
+
+    return mod_id
+
+
+def active_mod_load_order_edges(
+    mod_ids: list[str],
+    load_before: list[tuple[str, str]] = MOD_LOAD_BEFORE,
+    load_after: list[tuple[str, str]] = MOD_LOAD_AFTER,
+) -> list[tuple[str, str]]:
+    """Return applicable directed Mod ID ordering edges without duplicates."""
+    active = set(mod_ids)
+    edges: list[tuple[str, str]] = []
+
+    def add_edge(before: str, after: str) -> None:
+        if before in active and after in active and (before, after) not in edges:
+            edges.append((before, after))
+
+    for before, after in load_before:
+        add_edge(before, after)
+
+    for after, before in load_after:
+        add_edge(before, after)
+
+    return edges
+
+
+def find_mod_load_order_cycle(
+    successors: dict[str, list[str]],
+    mod_ids: list[str],
+) -> list[str]:
+    """Return one directed cycle, including the repeated closing Mod ID."""
+    state = {mod_id: 0 for mod_id in mod_ids}
+    stack: list[str] = []
+
+    def visit(mod_id: str) -> list[str] | None:
+        state[mod_id] = 1
+        stack.append(mod_id)
+
+        for successor in successors[mod_id]:
+            if state[successor] == 0:
+                cycle = visit(successor)
+                if cycle:
+                    return cycle
+            elif state[successor] == 1:
+                start = stack.index(successor)
+                return stack[start:] + [successor]
+
+        stack.pop()
+        state[mod_id] = 2
+        return None
+
+    for mod_id in mod_ids:
+        if state[mod_id] == 0:
+            cycle = visit(mod_id)
+            if cycle:
+                return cycle
+
+    return []
+
+
+def reorder_mod_ids(
+    mod_ids: list[str],
+    load_before: list[tuple[str, str]] = MOD_LOAD_BEFORE,
+    load_after: list[tuple[str, str]] = MOD_LOAD_AFTER,
+) -> list[str]:
+    """Apply hard rules with a stable topological sort of active Mod IDs.
+
+    The collection-derived order is used whenever there is no dependency edge,
+    so unrelated Mod IDs retain their relative order.  A cycle is an invalid
+    administrator configuration rather than an order to guess at.
+    """
+    ordered_ids = list(dict.fromkeys(mod_ids))
+    edges = active_mod_load_order_edges(
+        ordered_ids,
+        load_before,
+        load_after,
+    )
+    original_index = {mod_id: index for index, mod_id in enumerate(ordered_ids)}
+    successors = {mod_id: [] for mod_id in ordered_ids}
+    indegree = {mod_id: 0 for mod_id in ordered_ids}
+
+    for before, after in edges:
+        successors[before].append(after)
+        indegree[after] += 1
+
+    available = [mod_id for mod_id in ordered_ids if indegree[mod_id] == 0]
+    result: list[str] = []
+
+    while available:
+        available.sort(key=original_index.__getitem__)
+        mod_id = available.pop(0)
+        result.append(mod_id)
+
+        for successor in successors[mod_id]:
+            indegree[successor] -= 1
+            if indegree[successor] == 0:
+                available.append(successor)
+
+    if len(result) != len(ordered_ids):
+        cycle = find_mod_load_order_cycle(successors, ordered_ids)
+        raise ModLoadOrderError(
+            "Contradictory Mod ID load-order rules (cycle: "
+            + " -> ".join(cycle)
+            + "). Check MOD_LOAD_BEFORE and MOD_LOAD_AFTER."
+        )
+
+    return result
+
+
+def mod_load_order_adjustments(
+    original: list[str],
+    load_before: list[tuple[str, str]] = MOD_LOAD_BEFORE,
+    load_after: list[tuple[str, str]] = MOD_LOAD_AFTER,
+) -> list[str]:
+    """Describe only hard-rule changes, keeping normal output concise."""
+    original_index = {mod_id: index for index, mod_id in enumerate(original)}
+    active = set(original)
+    adjustments: list[str] = []
+    described_edges: set[tuple[str, str]] = set()
+
+    for before, after in load_before:
         if (
-            not line
-            or line.startswith("#")
-            or "=" not in line
+            before in active
+            and after in active
+            and original_index[before] > original_index[after]
+            and (before, after) not in described_edges
         ):
-            continue
+            adjustments.append(f"{before} moved before {after}")
+            described_edges.add((before, after))
 
-        key, value = line.split("=", 1)
-
-        if key.strip().lower() != "id":
-            continue
-
-        mod_id = value.strip()
-
+    for after, before in load_after:
         if (
-            not mod_id
-            or ";" in mod_id
-            or "\n" in mod_id
-            or len(mod_id) > 200
+            before in active
+            and after in active
+            and original_index[before] > original_index[after]
+            and (before, after) not in described_edges
         ):
-            return None
+            adjustments.append(f"{after} moved after {before}")
+            described_edges.add((before, after))
 
-        return mod_id
-
-    return None
+    return adjustments
 
 
 def mod_info_rank(
@@ -1201,6 +1373,22 @@ def main() -> int:
             "Muldraugh, KY"
         )
 
+    collection_mod_ids = list(mod_ids)
+    try:
+        mod_ids = reorder_mod_ids(mod_ids)
+    except ModLoadOrderError as exc:
+        print(f"ERRORE: {exc}", file=sys.stderr)
+        return 1
+
+    load_order_adjustments = mod_load_order_adjustments(
+        collection_mod_ids,
+    )
+
+    if load_order_adjustments:
+        print("Mod load-order adjustments:")
+        for adjustment in load_order_adjustments:
+            print(f"  {adjustment}")
+
     prev_workshop = (
         set(
             previous.get(
@@ -1253,6 +1441,7 @@ def main() -> int:
         "last_to_load_collection_ids": last_to_load_collection_ids,
         "workshop_ids": workshop_ids,
         "mod_ids": mod_ids,
+        "mod_load_order_adjustments": load_order_adjustments,
         "map_names": final_maps,
         "records": records,
         "duplicate_workshop_ids_in_collection": duplicate_workshop_ids,
@@ -1401,6 +1590,11 @@ def main() -> int:
             for mid, owners
             in duplicate_mod_ids.items()
         ],
+    )
+
+    section(
+        "MOD LOAD-ORDER ADJUSTMENTS",
+        load_order_adjustments,
     )
 
     section(

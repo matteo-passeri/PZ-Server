@@ -120,6 +120,30 @@ The patcher returns `0` when no file changed, `10` when it changed one or more
 files, `1` for an error, and `130` when interrupted. A successful modifying run
 usually requires one Compose recreate before players use the patched content.
 
+## Mod ID load order
+
+Project Zomboid loads the `Mods=` value in order, so a Mod ID that extends or
+overrides another mod can require a specific position. The generator preserves
+the collection-derived order by default, then applies only the hard Mod ID
+rules near the top of `generate-mod-list/generate-mod-list.py`:
+`MOD_LOAD_BEFORE` and `MOD_LOAD_AFTER`. These rules affect
+`PZ_MOD_NAMES`/`Mods=` only; `PZ_MOD_IDS` remains the Workshop ID list used by
+the update checker.
+
+To make `ExampleFix` load after `ExampleBase`, add:
+
+```python
+MOD_LOAD_AFTER = [
+    # Existing rules...
+    ("ExampleFix", "ExampleBase"),
+]
+```
+
+Use `PZ_LASTTOLOAD_COLLECTION_ID` in `generate-mod-list/.env` for a Workshop
+collection that must load last. Rules for inactive Mod IDs are ignored;
+contradictory active rules fail the generator with the Mod IDs involved in the
+cycle.
+
 Run the update check manually with:
 
 ```bash
