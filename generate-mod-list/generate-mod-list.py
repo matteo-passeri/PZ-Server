@@ -37,6 +37,8 @@ MOD_ID_OVERRIDES = None
 # pair to MOD_LOAD_AFTER when the first Mod ID must load after the second.
 MOD_LOAD_BEFORE = [
     ("HBVCEFb42", "SWMG"),
+    ("CompanionDogs", "CompanionDogsRottweiler"),
+    ("CompanionDogs", "CompanionDogsDoberman"),
 ]
 MOD_LOAD_AFTER = [
     ("SWMG", "HBVCEFb42"),

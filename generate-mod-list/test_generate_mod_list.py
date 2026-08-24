@@ -70,6 +70,26 @@ class ModLoadOrderTests(unittest.TestCase):
             ["A", "HBVCEFb42", "SWMG", "MarzVanillaGuns", "B"],
         )
 
+    def test_companion_dogs_loads_before_its_submods(self) -> None:
+        self.assertEqual(
+            GENERATOR.reorder_mod_ids(
+                [
+                    "A",
+                    "CompanionDogsDoberman",
+                    "CompanionDogsRottweiler",
+                    "CompanionDogs",
+                    "B",
+                ]
+            ),
+            [
+                "A",
+                "CompanionDogs",
+                "CompanionDogsDoberman",
+                "CompanionDogsRottweiler",
+                "B",
+            ],
+        )
+
     def test_missing_mods_skip_their_rules(self) -> None:
         self.assertEqual(
             GENERATOR.reorder_mod_ids(["A", "B"]),
