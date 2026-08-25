@@ -16,12 +16,19 @@ MISSING_MARKERS = (
 )
 QUOTED_PATH = re.compile(r"[\"'](?P<path>(?:[A-Za-z]:)?/[^\"'\r\n]+)[\"']")
 UNQUOTED_PATH = re.compile(r"(?P<path>(?:[A-Za-z]:)?/[^\s\"'<>]+)")
+PREVENTIVE_DIRECTORY_ALIASES = (
+    ("AnimSets", "animsets"),
+    ("ActionGroups", "actiongroups"),
+)
 
 
 def path_is_relevant(path_text):
     lowered = path_text.replace("\\", "/").casefold()
     return "/mods/" in lowered and (
-        (lowered.endswith(".xml") and "animset" in lowered)
+        (
+            lowered.endswith(".xml")
+            and ("animset" in lowered or "actiongroup" in lowered)
+        )
         or "/mods/common" in lowered
     )
 
@@ -105,6 +112,49 @@ def ensure_case_alias(source, destination):
     return "created"
 
 
+def active_media_roots(workshop, active_workshop_ids):
+    """Yield media directories belonging to active Workshop items only."""
+    for workshop_id in active_workshop_ids:
+        mods_root = workshop / workshop_id / "mods"
+        if not mods_root.is_dir():
+            continue
+
+        for media_root in mods_root.rglob("media"):
+            if media_root.is_dir():
+                yield media_root
+
+
+def create_preventive_directory_aliases(ctx):
+    """Add only unambiguous B42 directory aliases before a server can log one."""
+    log = ctx["log"]
+    changed = False
+
+    for media_root in active_media_roots(
+        ctx["WORKSHOP"],
+        ctx["active_workshop_ids"],
+    ):
+        for source_name, destination_name in PREVENTIVE_DIRECTORY_ALIASES:
+            source = media_root / source_name
+            destination = media_root / destination_name
+            if not source.is_dir():
+                continue
+
+            result = ensure_case_alias(source, destination)
+            if result == "created":
+                log(
+                    "Linux case aliases: created preventive directory alias "
+                    f"{destination} -> {source_name}."
+                )
+                changed = True
+            elif result in ("blocked", "unexpected"):
+                log(
+                    "Linux case aliases: "
+                    f"{result}; leaving untouched: {destination}"
+                )
+
+    return changed
+
+
 def resolve_case_only_path(path_text, workshop, active_workshop_ids):
     """Find a single case-only path through an active Workshop mod tree."""
     suffix = relative_to_workshop(path_text, workshop, active_workshop_ids)
@@ -138,17 +188,17 @@ def resolve_case_only_path(path_text, workshop, active_workshop_ids):
 
 def run(ctx):
     log = ctx["log"]
+    changed = create_preventive_directory_aliases(ctx)
     log_path = ctx["latest_pz_server_log"]()
     if log_path is None:
-        log("Linux case aliases: no persisted PZ server startup log found; skip.")
-        return False
+        log("Linux case aliases: no persisted PZ server startup log found; file repair skipped.")
+        return changed
 
     candidates = missing_paths(log_path)
     if not candidates:
         log(f"Linux case aliases: no relevant missing paths in {log_path}; skip.")
-        return False
+        return changed
 
-    changed = False
     for path_text in candidates:
         status, aliases = resolve_case_only_path(
             path_text,
@@ -174,6 +224,6 @@ def run(ctx):
 
 
 FIX = {
-    "name": "B42 Linux log-driven AnimSet/XML case aliases",
+    "name": "B42 Linux preventive and log-driven case aliases",
     "run": run,
 }
