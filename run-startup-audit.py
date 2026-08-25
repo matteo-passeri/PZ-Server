@@ -36,18 +36,48 @@ def read_env(path):
 
 def container_start_time(container):
     result = subprocess.run(
-        ["podman", "inspect", container, "--format", "{{.State.StartedAt}}"],
+        [
+            "podman",
+            "inspect",
+            container,
+            "--format",
+            "{{json .State.StartedAt}}",
+        ],
         capture_output=True,
         text=True,
         check=False,
     )
+
     if result.returncode != 0:
         return None
-    raw = result.stdout.strip()
-    if not raw or raw.startswith("0001-"):
-        return None
-    return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
 
+    raw = result.stdout.strip()
+
+    if not raw or raw in ('""', "null"):
+        return None
+
+    if raw[0] == raw[-1] == '"':
+        raw = raw[1:-1]
+
+    if raw.startswith("0001-"):
+        return None
+
+    # Podman may return nanoseconds; Python datetime supports microseconds.
+    if "." in raw:
+        head, tail = raw.split(".", 1)
+
+        tz_pos = max(tail.find("+"), tail.find("-"))
+        if tz_pos != -1:
+            fraction = tail[:tz_pos]
+            timezone = tail[tz_pos:]
+        else:
+            fraction = tail
+            timezone = ""
+
+        fraction = fraction[:6]
+        raw = f"{head}.{fraction}{timezone}"
+
+    return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
 
 def select_current_log(logs_dir, started_at):
     candidates = [
