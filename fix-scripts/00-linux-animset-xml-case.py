@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create log-proven, case-only aliases for B42 animation assets on Linux."""
+"""Create case-only aliases for B42 animation assets on Linux."""
 import os
 import re
 from pathlib import Path
@@ -124,6 +124,51 @@ def active_media_roots(workshop, active_workshop_ids):
                 yield media_root
 
 
+def create_animsets_descendant_aliases(animsets, log):
+    """Alias mixed-case AnimSets children without traversing symlink aliases."""
+    changed = False
+    directories = [animsets]
+
+    while directories:
+        directory = directories.pop()
+        try:
+            children = list(directory.iterdir())
+        except OSError as exc:
+            log(f"Linux case aliases: unable to inspect {directory}: {exc}")
+            continue
+
+        for source in children:
+            # Traversal is limited to original directory entries. This prevents
+            # an alias from becoming another traversal root on later runs.
+            if source.is_symlink():
+                continue
+
+            if source.is_dir():
+                directories.append(source)
+            elif not source.is_file():
+                continue
+
+            lowercase_name = source.name.lower()
+            if lowercase_name == source.name:
+                continue
+
+            destination = source.with_name(lowercase_name)
+            result = ensure_case_alias(source, destination)
+            if result == "created":
+                log(
+                    "Linux case aliases: created AnimSets descendant alias "
+                    f"{destination} -> {source.name}."
+                )
+                changed = True
+            elif result in ("blocked", "unexpected", "unfixable"):
+                log(
+                    "Linux case aliases: "
+                    f"{result}; leaving untouched: {destination}"
+                )
+
+    return changed
+
+
 def create_preventive_directory_aliases(ctx):
     """Add only unambiguous B42 directory aliases before a server can log one."""
     log = ctx["log"]
@@ -151,6 +196,10 @@ def create_preventive_directory_aliases(ctx):
                     "Linux case aliases: "
                     f"{result}; leaving untouched: {destination}"
                 )
+
+            if source_name == "AnimSets":
+                if create_animsets_descendant_aliases(source, log):
+                    changed = True
 
     return changed
 
