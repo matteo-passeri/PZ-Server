@@ -35,6 +35,8 @@ MOD_ID_OVERRIDES = None
 #
 # Add a pair here when the first Mod ID must load before the second.  Add a
 # pair to MOD_LOAD_AFTER when the first Mod ID must load after the second.
+# MOD_LOAD_LAST is for the one Mod ID that must load after every other active
+# Mod ID.
 MOD_LOAD_BEFORE = [
     ("HBVCEFb42", "SWMG"),
     ("NeatUI_Framework", "Neat_Crafting"),
@@ -58,6 +60,7 @@ MOD_LOAD_AFTER = [
     ("MarzVanillaGuns", "SWMG"),
     ("MarzVanillaGuns", "HBVCEFb42"),
 ]
+MOD_LOAD_LAST = "Linux_Animsets_Marz_Mods"
 class SteamAPIError(RuntimeError):
     pass
 
@@ -628,6 +631,7 @@ def active_mod_load_order_edges(
     mod_ids: list[str],
     load_before: list[tuple[str, str]] = MOD_LOAD_BEFORE,
     load_after: list[tuple[str, str]] = MOD_LOAD_AFTER,
+    load_last: str = MOD_LOAD_LAST,
 ) -> list[tuple[str, str]]:
     """Return applicable directed Mod ID ordering edges without duplicates."""
     active = set(mod_ids)
@@ -642,6 +646,11 @@ def active_mod_load_order_edges(
 
     for after, before in load_after:
         add_edge(before, after)
+
+    if load_last in active:
+        for mod_id in mod_ids:
+            if mod_id != load_last:
+                add_edge(mod_id, load_last)
 
     return edges
 
@@ -684,6 +693,7 @@ def reorder_mod_ids(
     mod_ids: list[str],
     load_before: list[tuple[str, str]] = MOD_LOAD_BEFORE,
     load_after: list[tuple[str, str]] = MOD_LOAD_AFTER,
+    load_last: str = MOD_LOAD_LAST,
 ) -> list[str]:
     """Apply hard rules with a stable topological sort of active Mod IDs.
 
@@ -696,6 +706,7 @@ def reorder_mod_ids(
         ordered_ids,
         load_before,
         load_after,
+        load_last,
     )
     original_index = {mod_id: index for index, mod_id in enumerate(ordered_ids)}
     successors = {mod_id: [] for mod_id in ordered_ids}

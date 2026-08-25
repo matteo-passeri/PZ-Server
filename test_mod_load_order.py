@@ -43,7 +43,7 @@ class ModLoadOrderTests(unittest.TestCase):
             positions["rWaterTrailerSemiB42"],
         )
 
-    def test_final_collection_keeps_diagnostics_last_with_error_last(self) -> None:
+    def test_linux_animsets_mod_loads_last(self) -> None:
         collection_order = [
             "ordinary_mod",
             "Linux_Animsets_Marz_Mods",
@@ -54,8 +54,12 @@ class ModLoadOrderTests(unittest.TestCase):
         ordered = GENERATOR_MODULE.reorder_mod_ids(collection_order)
 
         self.assertEqual(
-            ordered[-2:],
-            ["AMMS_Standalone", "errorMagnifier"],
+            ordered[-3:],
+            [
+                "AMMS_Standalone",
+                "errorMagnifier",
+                "Linux_Animsets_Marz_Mods",
+            ],
         )
 
 
