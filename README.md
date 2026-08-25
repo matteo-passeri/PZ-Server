@@ -49,6 +49,16 @@ Run local patches after Workshop content downloads:
 python3 apply-local-fixes.py
 ```
 
+Audit the latest Project Zomboid server DebugLog, or a specific saved log:
+
+```bash
+./audit-server-log.py
+./audit-server-log.py --log /path/to/DebugLog-server.txt --all
+```
+
+Reports are written under the ignored `reports/` directory. The update checker
+runs a non-blocking startup audit after RCON reports the server ready.
+
 The patcher loads root-level `fix-scripts/*.py` alphabetically. It returns `0`
 when no file changed, `10` when it changed files, `1` for an error, and `130`
 when interrupted. A modifying run usually requires a Compose recreate.

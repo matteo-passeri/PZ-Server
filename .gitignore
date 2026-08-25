@@ -22,6 +22,7 @@ project-zomboid-mods-report.txt
 
 # Local/manual backups
 backups/
+reports/
 
 # Local Python virtual environment
 .venv/

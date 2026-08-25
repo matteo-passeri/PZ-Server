@@ -382,6 +382,34 @@ def apply_local_fixes():
     )
 
 
+def audit_startup_log():
+    """Run the log reporter without affecting the server update workflow."""
+    reporter = config.SCRIPT_DIR / "audit-server-log.py"
+    if not reporter.is_file():
+        log(f"Server log audit unavailable: reporter not found: {reporter}")
+        return
+
+    log("Auditing the Project Zomboid startup log...")
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(reporter), "--startup"],
+            cwd=BASE,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log(f"Server log audit failed (non-blocking): {exc}")
+        return
+
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    if proc.returncode != 0:
+        log(f"Server log audit failed (non-blocking): exit code {proc.returncode}")
+
+
 # ------------------------------------------------------------
 # Restart / recreate
 # ------------------------------------------------------------
@@ -845,6 +873,8 @@ def restart_server():
 
             wait_for_server_ready()
 
+            audit_startup_log()
+
             # Updated Workshop files are now present on disk.
             # Apply any local fixes.
             patch_changed = (
@@ -868,6 +898,8 @@ def restart_server():
                 )
 
                 wait_for_server_ready()
+
+                audit_startup_log()
 
                 # Important check: after the second startup, the patcher must
                 # be clean. Do not continue indefinitely if it changes files
