@@ -223,7 +223,7 @@ def generate_reports(source: Path, requested: str = "all") -> list[Path]:
     output = []
 
     if requested in ("all", "startup") or marker_index is None:
-        startup_end = marker_index if marker_index is not None else len(lines)
+        startup_end = marker_index + 1 if marker_index is not None else len(lines)
         startup = REPORTS_DIR / f"{stem}-startup-errors.txt"
         startup.write_text(format_report(source, lines, "startup", 0, startup_end, marker_index), encoding="utf-8")
         output.append(startup)
