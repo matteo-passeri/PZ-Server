@@ -4,6 +4,36 @@ Operational scripts for a Project Zomboid Build 42 dedicated server running
 with Podman Compose. The repository root is the deployment directory: copy the
 whole checkout to the server root and run all commands from there.
 
+## Features
+
+- Starts and configures a containerized Project Zomboid dedicated server with
+  Podman Compose.
+- Generates Workshop, Mod ID, and map lists from ordered Steam collections,
+  including explicit dependency and final-load rules.
+- Applies safe, idempotent local compatibility fixes to downloaded Workshop
+  content, including targeted Linux filesystem case aliases.
+- Detects Workshop updates, waits for an empty server, then performs a guarded
+  recreate and verification workflow.
+- Audits the latest server DebugLog into readable startup and on-demand runtime
+  reports, classifying critical, dependency, animation, and low-noise issues.
+- Runs one best-effort startup audit after the server reaches the SERVER STARTED
+  marker; runtime audits are manual and consume no background resources.
+- Provides optional user-level systemd templates for periodic update checks.
+
+## How It Runs
+
+1. Configure `.env` with the server paths, credentials, and Workshop
+   collections, then generate the current mod lists.
+2. Start the Compose service. The entrypoint applies server settings and starts
+   Project Zomboid.
+3. Once the current DebugLog reaches the SERVER STARTED marker, a one-shot
+   startup audit writes a report under `reports/` and exits.
+4. Run `check-mod-updates.py` manually or through the optional systemd timer to
+   check Workshop updates. When the server is empty, it recreates the service,
+   applies local fixes, and verifies the new server instance.
+5. Run `audit-server-log.py --runtime` whenever a runtime diagnostic snapshot
+   is needed; it reads the current log once and does not install a watcher.
+
 ## Layout
 
 | Path | Purpose |
