@@ -1,0 +1,15 @@
+# /etc/systemd/system/pz-startup-audit.service
+
+[Unit]
+Description=Project Zomboid startup log audit
+After=compose-project-zomboid.service
+PartOf=compose-project-zomboid.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/<your_path_to_script_folder>/project-zomboid
+ExecStart=/<your_path_to_script_folder>/project-zomboid/run-startup-audit.py
+TimeoutStartSec=21min
+
+[Install]
+WantedBy=compose-project-zomboid.service

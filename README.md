@@ -86,8 +86,9 @@ Audit the latest Project Zomboid server DebugLog, or a specific saved log:
 ./audit-server-log.py --log /path/to/DebugLog-server.txt --all
 ```
 
-Reports are written under the ignored `reports/` directory. The container runs
-one non-blocking startup audit after the server writes its SERVER STARTED marker.
+Reports are written under the ignored `reports/` directory. Runtime audits are
+manual. A separate host-side systemd service runs one startup audit after the
+server writes its SERVER STARTED marker, then exits.
 
 The patcher loads root-level `fix-scripts/*.py` alphabetically. It returns `0`
 when no file changed, `10` when it changed files, `1` for an error, and `130`
@@ -112,6 +113,24 @@ cp pz-mod-check.service pz-mod-check.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now pz-mod-check.timer
 sudo loginctl enable-linger "$USER"
+```
+
+To install the host-side startup audit service, replace the deployment path
+placeholder in `pz-startup-audit.service`, then run:
+
+```bash
+sudo cp pz-startup-audit.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable pz-startup-audit.service
+```
+
+`WantedBy=compose-project-zomboid.service` creates a non-failing Wants
+relationship when the audit service is enabled. Verify it with:
+
+```bash
+systemctl show -p Wants compose-project-zomboid.service
+systemctl status pz-startup-audit.service
+journalctl -u pz-startup-audit.service -b
 ```
 
 ## Local State
