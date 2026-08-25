@@ -817,10 +817,10 @@ def extract_local_mod_ids(
     """
     Extract Mod IDs from a Workshop item's local mod.info files.
 
-    Each mods/<mod-name> directory is handled separately, so a Workshop item
-    containing multiple mods continues to produce multiple Mod IDs. One
-    variant is selected for each mod, preferring 42.20, then 42, then the
-    unversioned variant.
+    Each mods/<mod-name> directory is handled separately. The result is used
+    to detect multi-mod Workshop items; it does not by itself activate every
+    discovered Mod ID. One variant is selected for each mod, preferring 42.20,
+    then 42, then the unversioned variant.
     """
     item_root = workshop_root / workshop_id
     mods_root = item_root / "mods"
@@ -864,6 +864,22 @@ def extract_local_mod_ids(
             out.append(mod_id)
 
     return out
+
+
+def select_workshop_mod_ids(
+    description_mod_ids: list[str],
+    local_mod_ids: list[str],
+    override_mod_ids: list[str] | None,
+) -> tuple[list[str], list[str]]:
+    """Select automatic IDs, returning unresolved multi-mod IDs separately."""
+    if override_mod_ids is not None:
+        return list(override_mod_ids), []
+
+    discovered = list(dict.fromkeys(description_mod_ids + local_mod_ids))
+    if len(discovered) > 1:
+        return [], discovered
+
+    return discovered, []
 
 
 def suspicious_build(
@@ -1156,6 +1172,7 @@ def main() -> int:
 
     removed: list[str] = []
     missing_mod_id: list[dict[str, str]] = []
+    multi_mod_selection_required: list[dict[str, Any]] = []
     wrong_app: list[dict[str, Any]] = []
     suspicious: list[dict[str, Any]] = []
     malformed: list[dict[str, str]] = []
@@ -1226,7 +1243,7 @@ def main() -> int:
             )
         )
 
-        mids = extract_values(
+        description_mids = extract_values(
             [
                 "Mod ID",
                 "ModID",
@@ -1234,42 +1251,41 @@ def main() -> int:
             desc,
         )
 
-        # Manual fallback: if Steam does not expose a readable Mod ID in the
-        # description, use the overrides defined at the top of the script.
-        if (
-            not mids
-            and wid in MOD_ID_OVERRIDES
-        ):
-            mids = list(
-                MOD_ID_OVERRIDES[wid]
-            )
-
-            print(
-                f"Applied Mod ID override: "
-                f"{wid} ({title}) -> "
-                f"{', '.join(mids)}"
-            )
-
-        # Local fallback: some Workshop items (for example Proper Pickaxe) do
-        # not publish "Mod ID:" in the Steam description but have a valid
-        # mod.info.
-        if (
-            not mids
-            and workshop_root.is_dir()
-        ):
+        local_mids: list[str] = []
+        if workshop_root.is_dir():
             local_mids = extract_local_mod_ids(
                 workshop_root,
                 wid,
             )
 
-            if local_mids:
-                mids = local_mids
+        mids, unresolved_mids = select_workshop_mod_ids(
+            description_mids,
+            local_mids,
+            MOD_ID_OVERRIDES.get(wid),
+        )
 
-                print(
-                    f"Mod ID read from local mod.info: "
-                    f"{wid} ({title}) -> "
-                    f"{', '.join(mids)}"
-                )
+        if wid in MOD_ID_OVERRIDES:
+            print(
+                f"Applied authoritative Mod ID override: "
+                f"{wid} ({title}) -> {', '.join(mids)}"
+            )
+        elif unresolved_mids:
+            multi_mod_selection_required.append({
+                "workshop_id": wid,
+                "title": title,
+                "mod_ids": unresolved_mids,
+            })
+            print(
+                "WARNING: multi-mod Workshop item requires "
+                f"PZ_MOD_ID_OVERRIDES selection: {wid} ({title}) -> "
+                f"{', '.join(unresolved_mids)}",
+                file=sys.stderr,
+            )
+        elif local_mids and not description_mids:
+            print(
+                f"Mod ID read from local mod.info: "
+                f"{wid} ({title}) -> {', '.join(mids)}"
+            )
 
         maps = extract_map_names(
             title,
@@ -1474,6 +1490,7 @@ def main() -> int:
         "duplicate_map_names": duplicate_maps,
         "removed_or_inaccessible_items": removed,
         "missing_mod_id_items": missing_mod_id,
+        "multi_mod_selection_required": multi_mod_selection_required,
         "wrong_app_items": wrong_app,
         "suspicious_build_items": suspicious,
         "malformed_values": malformed,
@@ -1522,6 +1539,10 @@ def main() -> int:
         f"Modded maps: {len(map_names)}",
         f"Removed/inaccessible: {len(removed)}",
         f"Without Mod ID: {len(missing_mod_id)}",
+        (
+            "Multi-mod items requiring selection: "
+            f"{len(multi_mod_selection_required)}"
+        ),
         f"Duplicate Mod IDs: {len(duplicate_mod_ids)}",
         f"Duplicate maps: {len(duplicate_maps)}",
         "",
@@ -1599,6 +1620,17 @@ def main() -> int:
         [
             f'{x["workshop_id"]}: {x["title"]}'
             for x in missing_mod_id
+        ],
+    )
+
+    section(
+        "MULTI-MOD WORKSHOP ITEMS REQUIRING SELECTION",
+        [
+            (
+                f'{x["workshop_id"]}: {x["title"]} — '
+                f'{", ".join(x["mod_ids"])}'
+            )
+            for x in multi_mod_selection_required
         ],
     )
 
@@ -1763,6 +1795,7 @@ def main() -> int:
     serious = bool(
         removed
         or missing_mod_id
+        or multi_mod_selection_required
         or duplicate_mod_ids
         or malformed
     )
