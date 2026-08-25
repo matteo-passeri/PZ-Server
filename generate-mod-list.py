@@ -42,10 +42,16 @@ MOD_LOAD_BEFORE = [
     ("Neat_Crafting", "Project_Cook"),
     ("Project_Cook", "Project_Cook_Pixel_Icon_Pack"),
     ("NeatUI_Framework", "Neat_Building"),
+    ("damnlib", "rWaterTrailerB42"),
+    ("tsarslib", "rWaterTrailerB42"),
+    ("82oshkoshM911", "rWaterTrailerB42"),
+    ("rSemiTruck", "rWaterTrailerB42"),
+    ("rWaterTrailerB42", "rWaterTrailerSemiB42"),
     ("VehicleRepairOverhaul", "VehicleSalvageOverhaulB42"),
     ("VehicleRepairOverhaul", "VRONearbyContainers"),
     ("CompanionDogs", "CompanionDogsRottweiler"),
     ("CompanionDogs", "CompanionDogsDoberman"),
+    ("AMMS_Standalone", "errorMagnifier"),
 ]
 MOD_LOAD_AFTER = [
     ("SWMG", "HBVCEFb42"),
