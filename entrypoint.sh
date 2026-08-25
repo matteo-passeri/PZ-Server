@@ -34,13 +34,12 @@ start_zomboid () {
 }
 
 audit_startup_once () {
+    local launch_time="$1"
+    local candidate_since=$((launch_time - 3))
     local log_file=""
-    local started_at
-
-    started_at=$(date +%s)
 
     while kill -0 "${zomboid_pid}" 2>/dev/null; do
-      log_file=$(find "${ZOMBOID_DATA_PATH}/Logs" -maxdepth 1 -type f -name '*DebugLog-server.txt' -newermt "@${started_at}" -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n 1 | cut -d' ' -f2-)
+      log_file=$(find "${ZOMBOID_DATA_PATH}/Logs" -maxdepth 1 -type f -name '*DebugLog-server.txt' -newermt "@${candidate_since}" -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n 1 | cut -d' ' -f2-)
       if [ -n "${log_file}" ] && grep -q '\*\*\* SERVER STARTED \*\*\*' "${log_file}"; then
         if ! python3 /pz-server/audit-server-log.py --log "${log_file}" --startup; then
           echo "$(timestamp) WARN: startup log audit failed; server startup continues"
@@ -315,9 +314,10 @@ modify_jvm_config
 modify_server_config
 
 # Start the server and set process id
+server_launch_time=$(date +%s)
 start_zomboid "${LAUNCH_ARGS[@]}"
 zomboid_pid=$!
-audit_startup_once &
+audit_startup_once "${server_launch_time}" &
 
 # Hold us open until we recieve a SIGTERM
 wait $zomboid_pid
