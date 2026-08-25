@@ -41,6 +41,7 @@ MOD_LOAD_BEFORE = [
     ("NeatUI_Framework", "Project_Cook"),
     ("Neat_Crafting", "Project_Cook"),
     ("Project_Cook", "Project_Cook_Pixel_Icon_Pack"),
+    ("NeatUI_Framework", "Neat_Building"),
     ("VehicleRepairOverhaul", "VehicleSalvageOverhaulB42"),
     ("VehicleRepairOverhaul", "VRONearbyContainers"),
     ("CompanionDogs", "CompanionDogsRottweiler"),
