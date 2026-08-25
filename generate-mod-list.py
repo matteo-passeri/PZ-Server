@@ -29,6 +29,7 @@ MANAGED_ENV_KEYS = None
 BACKUPS_TO_KEEP = None
 DEFAULT_WORKSHOP_ROOT = None
 MOD_ID_OVERRIDES = None
+MOD_BLACKLIST_MODS = None
 
 # Hard Mod ID load-order rules.  These affect PZ_MOD_NAMES (the server Mods=
 # value), never PZ_MOD_IDS (the WorkshopItems= value).
@@ -179,6 +180,7 @@ def load_configuration() -> None:
     global BACKUPS_TO_KEEP
     global DEFAULT_WORKSHOP_ROOT
     global MOD_ID_OVERRIDES
+    global MOD_BLACKLIST_MODS
 
     env = read_env(CONFIG_ENV_FILE)
 
@@ -244,6 +246,11 @@ def load_configuration() -> None:
         normalized_overrides[workshop_id] = mod_ids
 
     MOD_ID_OVERRIDES = normalized_overrides
+    MOD_BLACKLIST_MODS = {
+        mod_id.strip()
+        for mod_id in env.get("PZ_MOD_BLACKLIST_MODS", "").split(";")
+        if mod_id.strip()
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -870,12 +877,22 @@ def select_workshop_mod_ids(
     description_mod_ids: list[str],
     local_mod_ids: list[str],
     override_mod_ids: list[str] | None,
+    blacklisted_mod_ids: set[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Select automatic IDs, returning unresolved multi-mod IDs separately."""
+    blacklisted_mod_ids = blacklisted_mod_ids or set()
     if override_mod_ids is not None:
-        return list(override_mod_ids), []
+        return [
+            mod_id
+            for mod_id in override_mod_ids
+            if mod_id not in blacklisted_mod_ids
+        ], []
 
-    discovered = list(dict.fromkeys(description_mod_ids + local_mod_ids))
+    discovered = [
+        mod_id
+        for mod_id in dict.fromkeys(description_mod_ids + local_mod_ids)
+        if mod_id not in blacklisted_mod_ids
+    ]
     if len(discovered) > 1:
         return [], discovered
 
@@ -1262,6 +1279,7 @@ def main() -> int:
             description_mids,
             local_mids,
             MOD_ID_OVERRIDES.get(wid),
+            MOD_BLACKLIST_MODS,
         )
 
         if wid in MOD_ID_OVERRIDES:
