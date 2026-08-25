@@ -26,9 +26,116 @@ HOT_BRASS = load_module(
     "hot_brass_linux_case",
     "23-hot-brass-linux-case.py",
 )
+GENERIC_CASE_FIX = load_module(
+    "generic_linux_animset_xml_case",
+    "24-linux-animset-xml-case.py",
+)
 
 
 class LinuxCaseAliasTests(unittest.TestCase):
+    def run_generic_case_fix(self, workshop, log_path, logs):
+        return GENERIC_CASE_FIX.run({
+            "WORKSHOP": workshop,
+            "active_workshop_ids": {"123"},
+            "latest_pz_server_log": lambda: log_path,
+            "log": logs.append,
+        })
+
+    def test_generic_fix_creates_case_only_xml_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workshop = root / "workshop"
+            animsets = workshop / "123" / "mods" / "Example" / "media" / "AnimSets"
+            animsets.mkdir(parents=True)
+            source = animsets / "DefaultPathfind.XML"
+            source.write_text("", encoding="utf-8")
+            missing = animsets / "defaultpathfind.xml"
+            log_path = root / "server-console.txt"
+            log_path.write_text(
+                f"ERROR: file not found: '{missing}'\n",
+                encoding="utf-8",
+            )
+
+            logs = []
+            self.assertTrue(self.run_generic_case_fix(workshop, log_path, logs))
+            self.assertTrue(missing.is_symlink())
+            self.assertFalse(missing.readlink().is_absolute())
+            self.assertTrue(missing.samefile(source))
+            self.assertFalse(self.run_generic_case_fix(workshop, log_path, logs))
+
+    def test_generic_fix_ignores_inactive_workshop_trees(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workshop = root / "workshop"
+            animsets = workshop / "999" / "mods" / "Example" / "media" / "AnimSets"
+            animsets.mkdir(parents=True)
+            source = animsets / "Default.XML"
+            source.write_text("", encoding="utf-8")
+            missing = animsets / "default.xml"
+            log_path = root / "server-console.txt"
+            log_path.write_text(
+                f"ERROR: missing '{missing}'\n",
+                encoding="utf-8",
+            )
+
+            self.assertFalse(self.run_generic_case_fix(workshop, log_path, []))
+            self.assertFalse(missing.exists() or missing.is_symlink())
+
+    def test_generic_fix_leaves_ambiguous_case_matches_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workshop = root / "workshop"
+            animsets = workshop / "123" / "mods" / "Example" / "media" / "AnimSets"
+            animsets.mkdir(parents=True)
+            (animsets / "Default.XML").write_text("", encoding="utf-8")
+            (animsets / "dEFAULT.xml").write_text("", encoding="utf-8")
+            missing = animsets / "default.XML"
+            log_path = root / "server-console.txt"
+            log_path.write_text(
+                f"ERROR: missing '{missing}'\n",
+                encoding="utf-8",
+            )
+
+            logs = []
+            self.assertFalse(self.run_generic_case_fix(workshop, log_path, logs))
+            self.assertFalse(missing.exists() or missing.is_symlink())
+            self.assertTrue(any("ambiguous" in message for message in logs))
+
+    def test_generic_fix_keeps_correct_existing_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workshop = root / "workshop"
+            animsets = workshop / "123" / "mods" / "Example" / "media" / "AnimSets"
+            animsets.mkdir(parents=True)
+            source = animsets / "Default.XML"
+            source.write_text("", encoding="utf-8")
+            missing = animsets / "default.xml"
+            missing.symlink_to("Default.XML")
+            log_path = root / "server-console.txt"
+            log_path.write_text(
+                f"ERROR: cannot open '{missing}'\n",
+                encoding="utf-8",
+            )
+
+            self.assertFalse(self.run_generic_case_fix(workshop, log_path, []))
+            self.assertTrue(missing.samefile(source))
+
+    def test_generic_fix_creates_log_proven_common_directory_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workshop = root / "workshop"
+            common = workshop / "123" / "mods" / "Common"
+            (common / "media").mkdir(parents=True)
+            missing = workshop / "123" / "mods" / "common" / "media"
+            log_path = root / "server-console.txt"
+            log_path.write_text(
+                f"ERROR: no such file '{missing}'\n",
+                encoding="utf-8",
+            )
+
+            self.assertTrue(self.run_generic_case_fix(workshop, log_path, []))
+            self.assertTrue((workshop / "123" / "mods" / "common").samefile(common))
+
     def test_existing_relative_symlink_to_source_is_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -15,6 +15,8 @@ ENV_FILE = SCRIPT_DIR / ".env"
 
 BASE = None
 WORKSHOP = None
+LOG_ROOTS = None
+ACTIVE_WORKSHOP_IDS = None
 STATE_FILE = None
 CONTAINER = None
 FIX_SCRIPTS_DIR = None
@@ -73,6 +75,8 @@ def required_env(env, key):
 def load_configuration():
     global BASE
     global WORKSHOP
+    global LOG_ROOTS
+    global ACTIVE_WORKSHOP_IDS
     global STATE_FILE
     global CONTAINER
     global FIX_SCRIPTS_DIR
@@ -80,10 +84,25 @@ def load_configuration():
     env = read_env(ENV_FILE)
 
     BASE = configured_path(env, "PZ_SERVER_DIR")
-    WORKSHOP = (
-        configured_path(env, "PZ_DEDICATED_SERVER_DIR")
-        / "steamapps/workshop/content/108600"
-    )
+    dedicated_server = configured_path(env, "PZ_DEDICATED_SERVER_DIR")
+    WORKSHOP = dedicated_server / "steamapps/workshop/content/108600"
+    zomboid_data = env.get("PZ_ZOMBOID_DATA_DIR", "").strip()
+    LOG_ROOTS = [
+        dedicated_server / "Logs",
+        dedicated_server / "logs",
+    ]
+    if zomboid_data:
+        data_dir = Path(zomboid_data).expanduser()
+        LOG_ROOTS[:0] = [
+            data_dir / "Logs",
+            data_dir / "logs",
+        ]
+
+    ACTIVE_WORKSHOP_IDS = {
+        workshop_id.strip()
+        for workshop_id in env.get("PZ_MOD_IDS", "").split(";")
+        if workshop_id.strip().isdigit()
+    }
     STATE_FILE = BASE / ".pz-local-fixes-state.json"
     CONTAINER = required_env(env, "PZ_CONTAINER")
     FIX_SCRIPTS_DIR = SCRIPT_DIR / "fix-scripts"
@@ -153,6 +172,23 @@ def ensure_symlink(source, destination, link_target=None):
     )
 
     return status
+
+
+def latest_pz_server_log():
+    """Return the newest persisted PZ server/console log, if one exists."""
+    candidates = []
+
+    for root in LOG_ROOTS:
+        if not root.is_dir():
+            continue
+
+        for pattern in ("*.log", "*console*.txt", "*server*.txt"):
+            candidates.extend(path for path in root.glob(pattern) if path.is_file())
+
+    if not candidates:
+        return None
+
+    return max(candidates, key=lambda path: path.stat().st_mtime)
 
 
 def load_state():
@@ -287,6 +323,8 @@ def build_context(state):
     return {
         "BASE": BASE,
         "WORKSHOP": WORKSHOP,
+        "active_workshop_ids": ACTIVE_WORKSHOP_IDS,
+        "latest_pz_server_log": latest_pz_server_log,
         "STATE_FILE": STATE_FILE,
         "CONTAINER": CONTAINER,
         "state": state,

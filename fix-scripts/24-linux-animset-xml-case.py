@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""Create log-proven, case-only aliases for B42 animation assets on Linux."""
+import os
+import re
+from pathlib import Path
+
+
+MISSING_MARKERS = (
+    "missing",
+    "not found",
+    "does not exist",
+    "no such file",
+    "cannot open",
+    "can't open",
+    "failed to open",
+)
+QUOTED_PATH = re.compile(r"[\"'](?P<path>(?:[A-Za-z]:)?/[^\"'\r\n]+)[\"']")
+UNQUOTED_PATH = re.compile(r"(?P<path>(?:[A-Za-z]:)?/[^\s\"'<>]+)")
+
+
+def path_is_relevant(path_text):
+    lowered = path_text.replace("\\", "/").casefold()
+    return "/mods/" in lowered and (
+        (lowered.endswith(".xml") and "animset" in lowered)
+        or "/mods/common" in lowered
+    )
+
+
+def missing_paths(log_path):
+    """Extract only missing AnimSet/XML or Common-path candidates from a log."""
+    paths = []
+
+    for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        lowered = line.casefold()
+        if not any(marker in lowered for marker in MISSING_MARKERS):
+            continue
+
+        for pattern in (QUOTED_PATH, UNQUOTED_PATH):
+            for match in pattern.finditer(line):
+                path_text = match.group("path").rstrip(".,;:)]}")
+                if path_is_relevant(path_text) and path_text not in paths:
+                    paths.append(path_text)
+
+    return paths
+
+
+def relative_to_workshop(path_text, workshop, active_workshop_ids):
+    """Validate an absolute log path and return its active Workshop suffix."""
+    raw = Path(path_text)
+    if not raw.is_absolute():
+        return None
+
+    raw_parts = raw.parts
+    root_parts = workshop.parts
+    if len(raw_parts) <= len(root_parts):
+        return None
+    if tuple(part.casefold() for part in raw_parts[:len(root_parts)]) != tuple(
+        part.casefold() for part in root_parts
+    ):
+        return None
+
+    suffix = raw_parts[len(root_parts):]
+    if len(suffix) < 3 or suffix[0] not in active_workshop_ids:
+        return None
+    if suffix[1].casefold() != "mods":
+        return None
+
+    return suffix
+
+
+def case_only_matches(directory, requested_name):
+    """Return direct children whose names differ from requested_name only by case."""
+    if not directory.is_dir():
+        return []
+
+    folded = requested_name.casefold()
+    return [
+        child
+        for child in directory.iterdir()
+        if child.name != requested_name and child.name.casefold() == folded
+    ]
+
+
+def ensure_case_alias(source, destination):
+    """Safely create one relative alias, never taking over existing content."""
+    if destination.is_symlink():
+        try:
+            if destination.samefile(source):
+                return "present"
+        except OSError:
+            pass
+        return "unexpected"
+
+    if destination.exists():
+        return "blocked"
+
+    if not source.exists() or not destination.parent.is_dir():
+        return "unfixable"
+
+    link_target = os.path.relpath(
+        source.resolve(),
+        start=destination.parent.resolve(),
+    )
+    destination.symlink_to(link_target, target_is_directory=source.is_dir())
+    return "created"
+
+
+def resolve_case_only_path(path_text, workshop, active_workshop_ids):
+    """Find a single case-only path through an active Workshop mod tree."""
+    suffix = relative_to_workshop(path_text, workshop, active_workshop_ids)
+    if suffix is None:
+        return "outside_active_tree", []
+
+    current = workshop
+    aliases = []
+    for index, requested_name in enumerate(suffix):
+        exact = current / requested_name
+        if exact.exists() or exact.is_symlink():
+            current = exact
+            continue
+
+        matches = case_only_matches(current, requested_name)
+        if len(matches) != 1:
+            return ("ambiguous" if matches else "unfixable"), []
+
+        source = matches[0]
+        is_leaf = index == len(suffix) - 1
+        if not is_leaf and not source.is_dir():
+            return "unfixable", []
+        if is_leaf and path_text.casefold().endswith(".xml") and not source.is_file():
+            return "unfixable", []
+
+        aliases.append((source, exact))
+        current = source
+
+    return "resolved", aliases
+
+
+def run(ctx):
+    log = ctx["log"]
+    log_path = ctx["latest_pz_server_log"]()
+    if log_path is None:
+        log("Linux case aliases: no persisted PZ server startup log found; skip.")
+        return False
+
+    candidates = missing_paths(log_path)
+    if not candidates:
+        log(f"Linux case aliases: no relevant missing paths in {log_path}; skip.")
+        return False
+
+    changed = False
+    for path_text in candidates:
+        status, aliases = resolve_case_only_path(
+            path_text,
+            ctx["WORKSHOP"],
+            ctx["active_workshop_ids"],
+        )
+        if status != "resolved":
+            log(f"Linux case aliases: {status}; leaving untouched: {path_text}")
+            continue
+
+        for source, destination in aliases:
+            result = ensure_case_alias(source, destination)
+            if result == "created":
+                log(f"Linux case aliases: created {destination} -> {source.name}.")
+                changed = True
+            elif result in ("blocked", "unexpected", "unfixable"):
+                log(
+                    "Linux case aliases: "
+                    f"{result}; leaving untouched: {destination}"
+                )
+
+    return changed
+
+
+FIX = {
+    "name": "B42 Linux log-driven AnimSet/XML case aliases",
+    "run": run,
+}
