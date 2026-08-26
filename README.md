@@ -67,11 +67,12 @@ python3 generate-mod-list.py --output-dir . --env-file .env
 podman-compose up -d
 ```
 
-The generator preserves collection order except for the explicit rules in
-`MOD_LOAD_BEFORE` and `MOD_LOAD_AFTER`. Those rules affect `PZ_MOD_NAMES`/
-`Mods=` only; `PZ_MOD_IDS` remains the Workshop ID list used by the update
-checker. `PZ_LASTTOLOAD_COLLECTION_ID` moves the selected Workshop collection
-to the end while retaining its internal order.
+Collection order supplies the normal stable base order. Verified framework and
+dependency exceptions are encoded as hard Mod ID rules in `MOD_LOAD_FIRST`,
+`MOD_LOAD_BEFORE`, and `MOD_LOAD_AFTER`; diagnostic and final override mods use
+the ordered `MOD_LOAD_LAST` group. These rules affect `PZ_MOD_NAMES`/`Mods=`
+only; `PZ_MOD_IDS` remains the normal unique Workshop ID list used by the update
+checker. `PZ_LASTTOLOAD_COLLECTION_ID` is no longer supported.
 
 Run local patches after Workshop content downloads:
 

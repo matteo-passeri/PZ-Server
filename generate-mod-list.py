@@ -21,7 +21,6 @@ CONFIG_ENV_FILE = SCRIPT_DIR / ".env"
 APP_ID = None
 DEFAULT_COLLECTION_ID = None
 MAP_COLLECTION_IDS = None
-LAST_TO_LOAD_COLLECTION_IDS = None
 COLLECTION_API = None
 DETAILS_API = None
 USER_AGENT = None
@@ -36,8 +35,13 @@ MOD_BLACKLIST_MODS = None
 #
 # Add a pair here when the first Mod ID must load before the second.  Add a
 # pair to MOD_LOAD_AFTER when the first Mod ID must load after the second.
-# MOD_LOAD_LAST is for the one Mod ID that must load after every other active
-# Mod ID.
+# MOD_LOAD_FIRST and MOD_LOAD_LAST place active IDs at the beginning and end,
+# respectively, in their declared order.
+MOD_LOAD_FIRST = (
+    "damnlib",
+    "tsarslib",
+    "NeatUI_Framework",
+)
 MOD_LOAD_BEFORE = [
     ("HBVCEFb42", "SWMG"),
     ("NeatUI_Framework", "Neat_Crafting"),
@@ -97,7 +101,13 @@ MOD_LOAD_AFTER = [
     ("MarzVanillaGuns", "SWMG"),
     ("MarzVanillaGuns", "HBVCEFb42"),
 ]
-MOD_LOAD_LAST = "Linux_Animsets_Marz_Mods"
+MOD_LOAD_LAST = (
+    "ChuckleberryFinnAlertSystem",
+    "errorMagnifier",
+    "Linux_Animsets_Marz_Mods",
+)
+
+
 class SteamAPIError(RuntimeError):
     pass
 
@@ -208,7 +218,6 @@ def load_configuration() -> None:
     global APP_ID
     global DEFAULT_COLLECTION_ID
     global MAP_COLLECTION_IDS
-    global LAST_TO_LOAD_COLLECTION_IDS
     global COLLECTION_API
     global DETAILS_API
     global USER_AGENT
@@ -223,9 +232,6 @@ def load_configuration() -> None:
     APP_ID = positive_int_env(env, "PZ_APP_ID")
     DEFAULT_COLLECTION_ID = required_env(env, "PZ_DEFAULT_COLLECTION_ID")
     MAP_COLLECTION_IDS = env.get("PZ_MAP_COLLECTION_IDS", "").strip()
-    LAST_TO_LOAD_COLLECTION_IDS = env.get(
-        "PZ_LASTTOLOAD_COLLECTION_ID", ""
-    ).strip()
     COLLECTION_API = required_env(env, "PZ_COLLECTION_API")
     DETAILS_API = required_env(env, "PZ_DETAILS_API")
     USER_AGENT = required_env(env, "PZ_USER_AGENT")
@@ -342,17 +348,14 @@ def normalize_collection_ids(raw_values: list[str]) -> list[str]:
 def append_collection_items(
     collection_ids: list[str],
     incoming_ids: list[str],
-    move_to_end: bool = False,
 ) -> list[str]:
-    """Append collection items, optionally moving existing IDs to the end."""
+    """Append collection items while preserving the first collection position."""
     duplicates: list[str] = []
 
     for workshop_id in incoming_ids:
         if workshop_id in collection_ids:
             duplicates.append(workshop_id)
-            if not move_to_end:
-                continue
-            collection_ids.remove(workshop_id)
+            continue
 
         collection_ids.append(workshop_id)
 
@@ -670,13 +673,48 @@ def read_mod_id_from_info(path: Path) -> str | None:
     return mod_id
 
 
+def normalize_mod_load_group(group: tuple[str, ...] | str) -> tuple[str, ...]:
+    """Accept the former single-last-ID helper argument during the transition."""
+    return (group,) if isinstance(group, str) else group
+
+
 def active_mod_load_order_edges(
     mod_ids: list[str],
     load_before: list[tuple[str, str]] = MOD_LOAD_BEFORE,
     load_after: list[tuple[str, str]] = MOD_LOAD_AFTER,
-    load_last: str = MOD_LOAD_LAST,
+    load_first: tuple[str, ...] = MOD_LOAD_FIRST,
+    load_last: tuple[str, ...] | str = MOD_LOAD_LAST,
 ) -> list[tuple[str, str]]:
     """Return applicable directed Mod ID ordering edges without duplicates."""
+    load_first = normalize_mod_load_group(load_first)
+    load_last = normalize_mod_load_group(load_last)
+    duplicate_first = sorted(
+        {mod_id for mod_id in load_first if load_first.count(mod_id) > 1}
+    )
+    duplicate_last = sorted(
+        {mod_id for mod_id in load_last if load_last.count(mod_id) > 1}
+    )
+    shared_group_ids = sorted(set(load_first) & set(load_last))
+    if duplicate_first or duplicate_last or shared_group_ids:
+        problems: list[str] = []
+        if duplicate_first:
+            problems.append(
+                "duplicate MOD_LOAD_FIRST IDs: " + ", ".join(duplicate_first)
+            )
+        if duplicate_last:
+            problems.append(
+                "duplicate MOD_LOAD_LAST IDs: " + ", ".join(duplicate_last)
+            )
+        if shared_group_ids:
+            problems.append(
+                "IDs in both MOD_LOAD_FIRST and MOD_LOAD_LAST: "
+                + ", ".join(shared_group_ids)
+            )
+        raise ModLoadOrderError(
+            "Invalid Mod ID load-order group configuration: "
+            + "; ".join(problems)
+        )
+
     active = set(mod_ids)
     edges: list[tuple[str, str]] = []
 
@@ -690,10 +728,22 @@ def active_mod_load_order_edges(
     for after, before in load_after:
         add_edge(before, after)
 
-    if load_last in active:
+    active_first = [mod_id for mod_id in load_first if mod_id in active]
+    first_set = set(active_first)
+    for before, after in zip(active_first, active_first[1:]):
+        add_edge(before, after)
+    for first_mod_id in active_first:
         for mod_id in mod_ids:
-            if mod_id != load_last:
-                add_edge(mod_id, load_last)
+            if mod_id not in first_set:
+                add_edge(first_mod_id, mod_id)
+
+    active_last = [mod_id for mod_id in load_last if mod_id in active]
+    if active_last:
+        for mod_id in mod_ids:
+            if mod_id not in active_last:
+                add_edge(mod_id, active_last[0])
+        for before, after in zip(active_last, active_last[1:]):
+            add_edge(before, after)
 
     return edges
 
@@ -736,7 +786,8 @@ def reorder_mod_ids(
     mod_ids: list[str],
     load_before: list[tuple[str, str]] = MOD_LOAD_BEFORE,
     load_after: list[tuple[str, str]] = MOD_LOAD_AFTER,
-    load_last: str = MOD_LOAD_LAST,
+    load_first: tuple[str, ...] = MOD_LOAD_FIRST,
+    load_last: tuple[str, ...] | str = MOD_LOAD_LAST,
 ) -> list[str]:
     """Apply hard rules with a stable topological sort of active Mod IDs.
 
@@ -749,6 +800,7 @@ def reorder_mod_ids(
         ordered_ids,
         load_before,
         load_after,
+        load_first,
         load_last,
     )
     original_index = {mod_id: index for index, mod_id in enumerate(ordered_ids)}
@@ -777,7 +829,8 @@ def reorder_mod_ids(
         raise ModLoadOrderError(
             "Contradictory Mod ID load-order rules (cycle: "
             + " -> ".join(cycle)
-            + "). Check MOD_LOAD_BEFORE and MOD_LOAD_AFTER."
+            + "). Check MOD_LOAD_FIRST, MOD_LOAD_BEFORE, MOD_LOAD_AFTER, "
+            "and MOD_LOAD_LAST."
         )
 
     return result
@@ -787,12 +840,33 @@ def mod_load_order_adjustments(
     original: list[str],
     load_before: list[tuple[str, str]] = MOD_LOAD_BEFORE,
     load_after: list[tuple[str, str]] = MOD_LOAD_AFTER,
+    load_first: tuple[str, ...] = MOD_LOAD_FIRST,
+    load_last: tuple[str, ...] | str = MOD_LOAD_LAST,
 ) -> list[str]:
     """Describe only hard-rule changes, keeping normal output concise."""
-    original_index = {mod_id: index for index, mod_id in enumerate(original)}
-    active = set(original)
+    load_first = normalize_mod_load_group(load_first)
+    load_last = normalize_mod_load_group(load_last)
+    ordered_original = list(dict.fromkeys(original))
+    reordered = reorder_mod_ids(
+        ordered_original,
+        load_before,
+        load_after,
+        load_first,
+        load_last,
+    )
+    original_index = {
+        mod_id: index for index, mod_id in enumerate(ordered_original)
+    }
+    reordered_index = {
+        mod_id: index for index, mod_id in enumerate(reordered)
+    }
+    active = set(ordered_original)
     adjustments: list[str] = []
     described_edges: set[tuple[str, str]] = set()
+
+    for mod_id in load_first:
+        if mod_id in active and original_index[mod_id] != reordered_index[mod_id]:
+            adjustments.append(f"{mod_id} moved to first-load group")
 
     for before, after in load_before:
         if (
@@ -813,6 +887,14 @@ def mod_load_order_adjustments(
         ):
             adjustments.append(f"{after} moved after {before}")
             described_edges.add((before, after))
+
+    for mod_id in load_last:
+        if mod_id not in active or original_index[mod_id] == reordered_index[mod_id]:
+            continue
+        if mod_id == load_last[-1]:
+            adjustments.append(f"{mod_id} moved to absolute last position")
+        else:
+            adjustments.append(f"{mod_id} moved to last-load group")
 
     return adjustments
 
@@ -1074,11 +1156,6 @@ def main() -> int:
             if MAP_COLLECTION_IDS
             else []
         )
-        last_to_load_collection_ids = (
-            normalize_collection_ids([LAST_TO_LOAD_COLLECTION_IDS])
-            if LAST_TO_LOAD_COLLECTION_IDS
-            else []
-        )
     except ValueError as exc:
         print(
             f"ERROR: {exc}",
@@ -1086,14 +1163,8 @@ def main() -> int:
         )
         return 1
 
-    last_to_load_collection_id_set = set(last_to_load_collection_ids)
     selected_collection_ids = list(dict.fromkeys(
-        [
-            collection_id
-            for collection_id in mod_collection_ids + map_collection_ids
-            if collection_id not in last_to_load_collection_id_set
-        ]
-        + last_to_load_collection_ids
+        mod_collection_ids + map_collection_ids
     ))
     collections_display = ", ".join(selected_collection_ids)
     map_collection_id_set = set(map_collection_ids)
@@ -1168,7 +1239,6 @@ def main() -> int:
     collection_ids: list[str] = []
     duplicate_workshop_ids: list[str] = []
     map_workshop_ids: set[str] = set()
-    last_to_load_workshop_ids: set[str] = set()
 
     for collection_id in selected_collection_ids:
         print(
@@ -1191,13 +1261,9 @@ def main() -> int:
         if collection_id in map_collection_id_set:
             map_workshop_ids.update(current_collection_ids)
 
-        if collection_id in last_to_load_collection_id_set:
-            last_to_load_workshop_ids.update(current_collection_ids)
-
         duplicate_ids = append_collection_items(
             collection_ids,
             current_duplicates + current_collection_ids,
-            move_to_end=collection_id in last_to_load_collection_id_set,
         )
 
         for workshop_id in duplicate_ids:
@@ -1418,9 +1484,7 @@ def main() -> int:
 
         for x in valid_mids:
             if x in mod_ids:
-                if wid not in last_to_load_workshop_ids:
-                    continue
-                mod_ids.remove(x)
+                continue
             mod_ids.append(x)
 
         for x in valid_maps:
@@ -1533,7 +1597,6 @@ def main() -> int:
         "collection_ids": selected_collection_ids,
         "mod_collection_ids": mod_collection_ids,
         "map_collection_ids": map_collection_ids,
-        "last_to_load_collection_ids": last_to_load_collection_ids,
         "workshop_ids": workshop_ids,
         "mod_ids": mod_ids,
         "mod_load_order_adjustments": load_order_adjustments,
@@ -1583,10 +1646,6 @@ def main() -> int:
         (
             "Map collections: "
             + (", ".join(map_collection_ids) or "None")
-        ),
-        (
-            "Collections loaded last: "
-            + (", ".join(last_to_load_collection_ids) or "None")
         ),
         f"Valid Workshop items: {len(workshop_ids)}",
         f"Unique Mod IDs: {len(mod_ids)}",
