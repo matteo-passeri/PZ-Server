@@ -14,6 +14,28 @@ def safe_empty_template(block):
     return "part " not in block and "part\t" not in block
 
 
+def active_script_files(workshop, active_workshop_ids):
+    """Yield supported mod script trees only, never backups or arbitrary trees."""
+    for workshop_id in active_workshop_ids:
+        mods_root = workshop / workshop_id / "mods"
+        if not mods_root.is_dir():
+            continue
+        for mod_root in sorted(path for path in mods_root.iterdir() if path.is_dir()):
+            candidates = [mod_root / "media" / "scripts"]
+            for version in ("legacy", "42", "42.0", "42.13", "42.17", "42.20"):
+                candidates.append(mod_root / version / "media" / "scripts")
+            for scripts in candidates:
+                if scripts.is_dir():
+                    yield from sorted(path for path in scripts.rglob("*.txt") if ".pz-local-fix" not in path.name)
+
+
+def active_references(workshop, active_workshop_ids):
+    references = set()
+    for path in active_script_files(workshop, active_workshop_ids):
+        references.update(REFERENCE_RE.findall(path.read_text(encoding="utf-8", errors="replace")))
+    return references
+
+
 def run(ctx):
     root = ctx["WORKSHOP"] / WORKSHOP_ID / "mods" / MOD_NAME
     active = tree(ctx["WORKSHOP"], WORKSHOP_ID, MOD_NAME, ACTIVE_VERSION)
@@ -23,10 +45,7 @@ def run(ctx):
         return False
     upstream = template_locations(active)
     wanted = {}
-    references = set()
-    for workshop_id in ctx["active_workshop_ids"]:
-        for path in (ctx["WORKSHOP"] / workshop_id / "mods").glob("*/42.13/media/scripts/**/*.txt"):
-            references.update(REFERENCE_RE.findall(path.read_text(encoding="utf-8", errors="replace")))
+    references = active_references(ctx["WORKSHOP"], ctx["active_workshop_ids"])
     if not references:
         log("damnlib: no active DAMN template references found; skipped.")
         return False

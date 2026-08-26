@@ -72,6 +72,20 @@ def required_env(env, key):
     return value
 
 
+def active_workshop_ids_from_env(env):
+    """Return validated active Workshop IDs in generated configuration order."""
+    result = []
+    for workshop_id in env.get("PZ_MOD_IDS", "").split(";"):
+        workshop_id = workshop_id.strip()
+        if not workshop_id:
+            continue
+        if not workshop_id.isdigit():
+            raise RuntimeError(f"PZ_MOD_IDS contains a non-numeric Workshop ID: {workshop_id!r}")
+        if workshop_id not in result:
+            result.append(workshop_id)
+    return tuple(result)
+
+
 def load_configuration():
     global BASE
     global WORKSHOP
@@ -98,11 +112,7 @@ def load_configuration():
             data_dir / "logs",
         ]
 
-    ACTIVE_WORKSHOP_IDS = {
-        workshop_id.strip()
-        for workshop_id in env.get("PZ_MOD_IDS", "").split(";")
-        if workshop_id.strip().isdigit()
-    }
+    ACTIVE_WORKSHOP_IDS = active_workshop_ids_from_env(env)
     STATE_FILE = BASE / ".pz-local-fixes-state.json"
     CONTAINER = required_env(env, "PZ_CONTAINER")
     FIX_SCRIPTS_DIR = SCRIPT_DIR / "fix-scripts"
@@ -273,6 +283,12 @@ def discover_fix_scripts():
         )
 
     import importlib.util
+
+    fix_scripts_path = str(FIX_SCRIPTS_DIR)
+    if fix_scripts_path not in sys.path:
+        # Private helpers such as _vehicle_compat.py are importable by fixes,
+        # but remain excluded from discovery below.
+        sys.path.insert(0, fix_scripts_path)
 
     fixes = []
 
