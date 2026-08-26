@@ -7,9 +7,11 @@ whole checkout to the server root and run all commands from there.
 ## Features
 
 - Starts and configures a containerized Project Zomboid dedicated server with
-  Podman Compose.
+  Podman/Docker Compose.
 - Generates Workshop, Mod ID, and map lists from ordered Steam collections,
   including explicit dependency and final-load rules.
+- Reorders generated mod lists using configurable load-order rules, so required
+  mods can be placed first, before or after other mods, or last.
 - Applies safe, idempotent local compatibility fixes to downloaded Workshop
   content, including targeted Linux filesystem case aliases.
 - Detects Workshop updates, waits for an empty server, then performs a guarded
@@ -23,9 +25,12 @@ whole checkout to the server root and run all commands from there.
 ## How It Runs
 
 1. Configure `.env` with the server paths, credentials, and Workshop
-   collections, then generate the current mod lists.
+   collections, then generate the current mod lists via `generate-mod-lists.py`.
 2. Start the Compose service. The entrypoint applies server settings and starts
    Project Zomboid.
+
+         That's it! You can play now.
+
 3. Once the current DebugLog reaches the SERVER STARTED marker, a one-shot
    startup audit writes a report under `reports/` and exits.
 4. Run `check-mod-updates.py` manually or through the optional systemd timer to
