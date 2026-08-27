@@ -82,14 +82,43 @@ def parse_glb(data):
     return document, chunks
 
 
+def remove_action_stash_animations(document, intended_name):
+    """Retain the one expected animation and reject unrecognized extras."""
+    animations = document.get("animations")
+    if not isinstance(animations, list):
+        raise GLBValidationError("GLTF animations section is missing or invalid")
+
+    intended = []
+    action_stash = []
+    for animation_index, animation in enumerate(animations):
+        if not isinstance(animation, dict):
+            raise GLBValidationError(f"animation {animation_index} is not an object")
+        name = animation.get("name")
+        if name == intended_name:
+            intended.append(animation)
+        elif isinstance(name, str) and name.startswith("[Action Stash]"):
+            action_stash.append(animation)
+        else:
+            raise GLBValidationError(
+                f"animation {animation_index} has an unexpected name {name!r}"
+            )
+
+    if len(intended) != 1:
+        raise GLBValidationError(
+            f"expected exactly one animation named {intended_name!r}; found {len(intended)}"
+        )
+
+    document["animations"] = intended
+    return len(action_stash)
+
+
 def remove_unsupported_channels(document):
-    """Return a copied document and the number of explicitly allowed removals."""
+    """Return the number of channels removed from the intended animation."""
     nodes = document.get("nodes")
     if not isinstance(nodes, list):
         raise GLBValidationError("GLTF nodes section is missing or invalid")
 
-    updated = copy.deepcopy(document)
-    animations = updated.get("animations", [])
+    animations = document.get("animations", [])
     if not isinstance(animations, list):
         raise GLBValidationError("GLTF animations section is invalid")
 
@@ -141,7 +170,7 @@ def remove_unsupported_channels(document):
                 kept.append(channel)
         animation["channels"] = kept
 
-    return updated, removed
+    return removed
 
 
 def rebuild_glb(document, chunks):
@@ -198,12 +227,17 @@ def rewrite_atomically(path, data):
 
 
 def transform_glb(path):
-    """Return removed channel count, or raise before making any file changes."""
+    """Return both removal counts, or raise before making any file changes."""
     original_data = path.read_bytes()
     original_document, chunks = parse_glb(original_data)
-    updated_document, removed = remove_unsupported_channels(original_document)
-    if not removed:
-        return 0
+    updated_document = copy.deepcopy(original_document)
+    action_stash_removed = remove_action_stash_animations(
+        updated_document,
+        path.stem,
+    )
+    channels_removed = remove_unsupported_channels(updated_document)
+    if not action_stash_removed and not channels_removed:
+        return 0, 0
 
     for section in PROTECTED_SECTIONS:
         if original_document.get(section) != updated_document.get(section):
@@ -222,34 +256,42 @@ def transform_glb(path):
         raise GLBValidationError("rebuilt GLB changed a non-JSON chunk")
 
     rewrite_atomically(path, rebuilt)
-    return removed
+    return action_stash_removed, channels_removed
 
 
 def run(ctx):
-    root = ctx["WORKSHOP"] / WORKSHOP_ID / BOB_RELATIVE
     log = ctx["log"]
+    if WORKSHOP_ID not in ctx["active_workshop_ids"]:
+        log("RadArchery: Workshop 3775407541 is not active; skip.")
+        return False
+
+    root = ctx["WORKSHOP"] / WORKSHOP_ID / BOB_RELATIVE
     if not root.is_dir():
         log("RadArchery: B42 Bob GLB tree not present; skip.")
         return False
 
     paths = sorted(path for path in root.glob("*.glb") if path.is_file())
     changed_files = 0
+    removed_action_stash = 0
     removed_channels = 0
     for path in paths:
         try:
-            removed = transform_glb(path)
+            action_stash_removed, channels_removed = transform_glb(path)
         except (GLBValidationError, OSError) as exc:
             log(f"RadArchery: blocked; leaving {path.name} untouched: {exc}")
             continue
-        if removed:
+        if action_stash_removed or channels_removed:
             changed_files += 1
-            removed_channels += removed
+            removed_action_stash += action_stash_removed
+            removed_channels += channels_removed
 
     state = "already clean" if not changed_files else "repaired"
     log(
         "RadArchery: "
         f"inspected {len(paths)} Bob GLBs; {state}; "
-        f"files changed={changed_files}; channels removed={removed_channels}."
+        f"files changed={changed_files}; "
+        f"Action Stash animations removed={removed_action_stash}; "
+        f"channels removed={removed_channels}."
     )
     return changed_files > 0
 

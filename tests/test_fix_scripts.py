@@ -94,13 +94,25 @@ def make_glb(document, binary):
     return struct.pack("<4sII", b"glTF", 2, 12 + len(payload)) + payload
 
 
-def test_radarchery_glb_fix_removes_only_named_channels_and_is_byte_idempotent(tmp_path):
-    module = load_path_module(FIX_DIR / "40-radarchery-bob-glb-channels.py")
-    workshop = tmp_path / "workshop"
-    path = workshop / module.WORKSHOP_ID / module.BOB_RELATIVE / "bow.glb"
-    path.parent.mkdir(parents=True)
+def radarchery_document(module, name, action_stash_count=0, intended_last=False):
     unsupported_names = sorted(module.UNSUPPORTED_NODE_NAMES)
-    document = {
+    intended = {
+        "name": name,
+        "samplers": [{"input": 0, "output": 0}],
+        "channels": (
+            [
+                {"sampler": 0, "target": {"node": index, "path": "rotation"}}
+                for index in range(len(unsupported_names))
+            ]
+            + [{"sampler": 0, "target": {"node": 5, "path": "scale"}}]
+        ),
+    }
+    action_stash = [
+        {"name": f"[Action Stash] {index}", "channels": []}
+        for index in range(action_stash_count)
+    ]
+    animations = action_stash + [intended] if intended_last else [intended] + action_stash
+    return {
         "asset": {"version": "2.0"},
         "nodes": ([{"name": name} for name in unsupported_names]
                   + [{"name": "Bip01_Spine"}]),
@@ -110,34 +122,103 @@ def test_radarchery_glb_fix_removes_only_named_channels_and_is_byte_idempotent(t
         "buffers": [{"byteLength": 4}],
         "meshes": [{"primitives": []}],
         "materials": [{"name": "unchanged"}],
-        "animations": [{
-            "samplers": [{"input": 0, "output": 0}],
-            "channels": (
-                [
-                    {"sampler": 0, "target": {"node": index, "path": "rotation"}}
-                    for index in range(len(unsupported_names))
-                ]
-                + [{"sampler": 0, "target": {"node": 5, "path": "scale"}}]
-            ),
-        }],
+        "animations": animations,
     }
-    path.write_bytes(make_glb(document, b"\x01\x02\x03\x04"))
+
+
+def radarchery_path(workshop, module, name="bow"):
+    path = workshop / module.WORKSHOP_ID / module.BOB_RELATIVE / f"{name}.glb"
+    path.parent.mkdir(parents=True)
+    return path
+
+
+def active_radarchery_context(workshop, module, log=None):
+    ctx = fix_context(workshop, log)
+    ctx["active_workshop_ids"] = (module.WORKSHOP_ID,)
+    return ctx
+
+
+@pytest.mark.parametrize("intended_last", (False, True), ids=("intended-first", "intended-last"))
+def test_radarchery_glb_fix_removes_action_stash_and_named_channels(tmp_path, intended_last):
+    module = load_path_module(FIX_DIR / "40-radarchery-bob-glb-channels.py")
+    workshop = tmp_path / "workshop"
+    path = radarchery_path(workshop, module)
+    path.write_bytes(make_glb(radarchery_document(module, path.stem, 3, intended_last), b"\x01\x02\x03\x04"))
     before_document, before_chunks = module.parse_glb(path.read_bytes())
 
     messages = []
-    assert module.FIX["run"](fix_context(workshop, messages.append))
+    assert module.FIX["run"](active_radarchery_context(workshop, module, messages.append))
     after_data = path.read_bytes()
     after_document, after_chunks = module.parse_glb(after_data)
+    assert [animation["name"] for animation in after_document["animations"]] == [path.stem]
     assert len(after_document["animations"][0]["channels"]) == 1
     assert after_document["animations"][0]["channels"][0]["target"]["node"] == 5
     for section in module.PROTECTED_SECTIONS:
         assert after_document[section] == before_document[section]
     assert after_chunks[1:] == before_chunks[1:]
-    assert "files changed=1; channels removed=5" in messages[-1]
+    assert "files changed=1; Action Stash animations removed=3; channels removed=5" in messages[-1]
+
+    assert not module.FIX["run"](active_radarchery_context(workshop, module, messages.append))
+    assert path.read_bytes() == after_data
+    assert "files changed=0; Action Stash animations removed=0; channels removed=0" in messages[-1]
+
+
+def test_radarchery_glb_fix_does_not_rewrite_already_clean_file(tmp_path):
+    module = load_path_module(FIX_DIR / "40-radarchery-bob-glb-channels.py")
+    workshop = tmp_path / "workshop"
+    path = radarchery_path(workshop, module)
+    document = radarchery_document(module, path.stem)
+    document["animations"][0]["channels"] = [{"sampler": 0, "target": {"node": 5, "path": "scale"}}]
+    original = make_glb(document, b"\x01\x02\x03\x04")
+    path.write_bytes(original)
+
+    assert not module.FIX["run"](active_radarchery_context(workshop, module))
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("kind", ("unexpected", "missing", "duplicate"))
+def test_radarchery_glb_fix_refuses_unexpected_animation_sets(tmp_path, kind):
+    module = load_path_module(FIX_DIR / "40-radarchery-bob-glb-channels.py")
+    workshop = tmp_path / "workshop"
+    path = radarchery_path(workshop, module)
+    document = radarchery_document(module, path.stem, 1)
+    if kind == "unexpected":
+        document["animations"].append({"name": "RealAnimation", "channels": []})
+    elif kind == "missing":
+        document["animations"][0]["name"] = "OtherAnimation"
+    else:
+        document["animations"].append(json.loads(json.dumps(document["animations"][0])))
+    original = make_glb(document, b"\x01\x02\x03\x04")
+    path.write_bytes(original)
+
+    assert not module.FIX["run"](active_radarchery_context(workshop, module))
+    assert path.read_bytes() == original
+
+
+def test_radarchery_glb_fix_refuses_invalid_channel_node_without_partial_repair(tmp_path):
+    module = load_path_module(FIX_DIR / "40-radarchery-bob-glb-channels.py")
+    workshop = tmp_path / "workshop"
+    path = radarchery_path(workshop, module)
+    document = radarchery_document(module, path.stem, 1)
+    document["animations"][0]["channels"][0]["target"]["node"] = 999
+    original = make_glb(document, b"\x01\x02\x03\x04")
+    path.write_bytes(original)
+
+    assert not module.FIX["run"](active_radarchery_context(workshop, module))
+    assert path.read_bytes() == original
+
+
+def test_radarchery_glb_fix_skips_inactive_workshop(tmp_path):
+    module = load_path_module(FIX_DIR / "40-radarchery-bob-glb-channels.py")
+    workshop = tmp_path / "workshop"
+    path = radarchery_path(workshop, module)
+    original = make_glb(radarchery_document(module, path.stem, 1), b"\x01\x02\x03\x04")
+    path.write_bytes(original)
+    messages = []
 
     assert not module.FIX["run"](fix_context(workshop, messages.append))
-    assert path.read_bytes() == after_data
-    assert "files changed=0; channels removed=0" in messages[-1]
+    assert path.read_bytes() == original
+    assert messages == ["RadArchery: Workshop 3775407541 is not active; skip."]
 
 
 def test_radarchery_glb_fix_leaves_malformed_file_untouched(tmp_path):
@@ -149,6 +230,6 @@ def test_radarchery_glb_fix_leaves_malformed_file_untouched(tmp_path):
     path.write_bytes(original)
     messages = []
 
-    assert not module.FIX["run"](fix_context(workshop, messages.append))
+    assert not module.FIX["run"](active_radarchery_context(workshop, module, messages.append))
     assert path.read_bytes() == original
     assert "blocked; leaving broken.glb untouched" in messages[0]
