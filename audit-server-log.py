@@ -23,6 +23,13 @@ JAVA_STACK_SUFFIX_RE = re.compile(
     r"\s+at\s+(?:[A-Za-z_$][\w$]*\.)+[A-Za-z_$][\w$]*"
     r"\([^\r\n)]*\)\.?\s*$"
 )
+JAVA_STACK_FRAME_RE = re.compile(
+    r"\s*at\s+(?:[A-Za-z_$][\w$]*\.)+[A-Za-z_$][\w$]*"
+    r"\([^\r\n)]*\)\.?\s*$"
+)
+JAVA_STACK_CONTINUATION_RE = re.compile(r"\s*\.\.\.\s+\d+\s+more\s*$")
+LOG_PROBLEM_LEVEL_RE = re.compile(r"(?:^|[\s\]])(?:ERROR|WARN(?:ING)?)\s*:", re.I)
+JAVA_EXCEPTION_RE = re.compile(r"\b\w*Exception\b")
 OPTIONAL_ANIMATION_PROBE_RE = re.compile(
     r"(?:^|/)steamapps/workshop/content/108600/"
     r"(?P<workshop_id>\d+)/mods/[^/]+/"
@@ -44,9 +51,11 @@ DEPENDENCY_PATTERNS = (
     "missing vehicle", "missing script template", "template \"",
     "template '",
 )
-ANIMATION_PATTERNS = (
-    "advancedanimator", "animsets", "actiongroups", "missing bones",
-    "could not find bone index", "animation", "animation xml",
+ANIMATION_SUBJECT_PATTERNS = (
+    "advancedanimator", "animsets", "actiongroups", "animation xml",
+)
+ACTIONABLE_ANIMATION_PATTERNS = (
+    "could not find bone index", "missing bones", "animation xml",
 )
 LOW_PATTERNS = (
     "missing thumpsound", "sanitizing container names",
@@ -60,6 +69,12 @@ class Event:
     line: str
     category: str
     severity: str
+
+
+@dataclass
+class OptionalProbeAnalysis:
+    details: list[tuple[str, str, str]]
+    suppressed_line_indexes: set[int]
 
 
 def optional_animation_probe_details(line: str) -> tuple[str, str, str] | None:
@@ -85,6 +100,38 @@ def optional_animation_probe_details(line: str) -> tuple[str, str, str] | None:
 def is_optional_animation_probe(line: str) -> bool:
     """Whether a line is a suppressible optional animation-directory probe."""
     return optional_animation_probe_details(line) is not None
+
+
+def is_java_stack_continuation(line: str) -> bool:
+    """Whether a line is an unambiguously attached Java stack continuation."""
+    return bool(
+        JAVA_STACK_FRAME_RE.fullmatch(line)
+        or JAVA_STACK_CONTINUATION_RE.fullmatch(line)
+    )
+
+
+def analyze_optional_probe_blocks(
+    lines: list[str],
+    start: int,
+    end: int,
+) -> OptionalProbeAnalysis:
+    """Find optional probe exceptions and their immediately attached frames."""
+    details = []
+    suppressed_line_indexes = set()
+
+    for index in range(start, end):
+        details_for_line = optional_animation_probe_details(lines[index])
+        if details_for_line is None:
+            continue
+
+        details.append(details_for_line)
+        suppressed_line_indexes.add(index)
+        continuation = index + 1
+        while continuation < end and is_java_stack_continuation(lines[continuation]):
+            suppressed_line_indexes.add(continuation)
+            continuation += 1
+
+    return OptionalProbeAnalysis(details, suppressed_line_indexes)
 
 
 def read_env(path: Path) -> dict[str, str]:
@@ -117,23 +164,38 @@ def latest_debug_log(env: dict[str, str]) -> Path:
 def classify(line: str) -> tuple[str, str] | None:
     lowered = line.casefold()
     lua_nil = re.search(r"attempt to (call|index).{0,100}nil", lowered)
+    has_problem_level = bool(LOG_PROBLEM_LEVEL_RE.search(line) or JAVA_EXCEPTION_RE.search(line))
     if any(pattern in lowered for pattern in CRITICAL_PATTERNS) or lua_nil:
         return "CRITICAL / HIGH", "critical"
     if any(pattern in lowered for pattern in DEPENDENCY_PATTERNS):
         return "DEPENDENCY / CONFIG", "important"
-    if any(pattern in lowered for pattern in ANIMATION_PATTERNS):
+    if any(pattern in lowered for pattern in ACTIONABLE_ANIMATION_PATTERNS):
+        return "ANIMATION / ASSET", "important"
+    if has_problem_level and any(pattern in lowered for pattern in ANIMATION_SUBJECT_PATTERNS):
         return "ANIMATION / ASSET", "important"
     if any(pattern in lowered for pattern in LOW_PATTERNS):
         return "LOW / NOISE", "low"
-    if re.search(r"\b(error|warn|exception)\b", lowered):
+    if has_problem_level:
         return "OTHER / WARNING", "important"
     return None
 
 
-def find_events(lines: list[str], start: int, end: int) -> list[Event]:
+def find_events(
+    lines: list[str],
+    start: int,
+    end: int,
+    suppressed_line_indexes: set[int] | None = None,
+) -> list[Event]:
+    if suppressed_line_indexes is None:
+        suppressed_line_indexes = analyze_optional_probe_blocks(
+            lines,
+            start,
+            end,
+        ).suppressed_line_indexes
+
     events = []
     for index in range(start, end):
-        if is_optional_animation_probe(lines[index]):
+        if index in suppressed_line_indexes:
             continue
         result = classify(lines[index])
         if result:
@@ -202,12 +264,18 @@ def format_report(
     all_counts = counts(lines)
     phase_lines = lines[phase_start:phase_end]
     phase_counts = counts(phase_lines)
-    events = find_events(lines, phase_start, phase_end)
-    probe_details = [
-        details
-        for line in lines[phase_start:phase_end]
-        if (details := optional_animation_probe_details(line)) is not None
-    ]
+    optional_probe_analysis = analyze_optional_probe_blocks(
+        lines,
+        phase_start,
+        phase_end,
+    )
+    events = find_events(
+        lines,
+        phase_start,
+        phase_end,
+        optional_probe_analysis.suppressed_line_indexes,
+    )
+    probe_details = optional_probe_analysis.details
     header = [
         "Project Zomboid Server Log Audit",
         f"Phase: {phase}",
@@ -237,15 +305,15 @@ def format_report(
 
     body.extend([
         "OPTIONAL LOADER PROBES",
-        f"Animation directory probes suppressed: {len(probe_details)}",
-        f"Unique requested paths: {len({path for _, path, _ in probe_details})}",
+        f"Suppressed optional animation directory probes: {len(probe_details)}",
+        f"Unique paths: {len({path for _, path, _ in probe_details})}",
     ])
     if probe_details:
         by_directory = Counter(directory.casefold() for directory, _, _ in probe_details)
         body.extend([
-            f"AnimSets probes: {by_directory['animsets']}",
-            f"actiongroups probes: {by_directory['actiongroups']}",
-            f"Affected Workshop items: {len({workshop_id for _, _, workshop_id in probe_details})}",
+            f"AnimSets: {by_directory['animsets']}",
+            f"actiongroups: {by_directory['actiongroups']}",
+            f"Workshop IDs: {len({workshop_id for _, _, workshop_id in probe_details})}",
         ])
     body.append("")
 
