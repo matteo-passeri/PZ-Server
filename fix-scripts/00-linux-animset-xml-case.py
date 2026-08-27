@@ -16,10 +16,27 @@ MISSING_MARKERS = (
 )
 QUOTED_PATH = re.compile(r"[\"'](?P<path>(?:[A-Za-z]:)?/[^\"'\r\n]+)[\"']")
 UNQUOTED_PATH = re.compile(r"(?P<path>(?:[A-Za-z]:)?/[^\s\"'<>]+)")
+JAVA_NO_SUCH_FILE_PATH = re.compile(
+    r"java\.nio\.file\.NoSuchFileException\s*:\s*"
+    r"(?P<path>(?:[A-Za-z]:)?[/\\][^\r\n]+)",
+    flags=re.I,
+)
+JAVA_STACK_SUFFIX = re.compile(
+    r"\s+at\s+(?:[A-Za-z_$][\w$]*\.)+[A-Za-z_$][\w$]*"
+    r"\([^\r\n)]*\)\.?\s*$"
+)
 PREVENTIVE_DIRECTORY_ALIASES = (
     ("AnimSets", "animsets"),
     ("ActionGroups", "actiongroups"),
 )
+
+
+def java_no_such_file_path(line):
+    """Extract a Java ``NoSuchFileException`` path without its stack suffix."""
+    match = JAVA_NO_SUCH_FILE_PATH.search(line)
+    if not match:
+        return None
+    return JAVA_STACK_SUFFIX.sub("", match.group("path")).strip().rstrip(".,;:)]}")
 
 
 def missing_paths(log_path):
@@ -33,6 +50,12 @@ def missing_paths(log_path):
     paths = []
 
     for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        java_path = java_no_such_file_path(line)
+        if java_path is not None:
+            if Path(java_path).is_absolute() and java_path not in paths:
+                paths.append(java_path)
+            continue
+
         lowered = line.casefold()
         if not any(marker in lowered for marker in MISSING_MARKERS):
             continue

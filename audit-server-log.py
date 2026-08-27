@@ -19,6 +19,10 @@ NO_SUCH_FILE_PATH_RE = re.compile(
     r"(?P<path>(?:[A-Za-z]:)?[/\\][^\r\n]+)",
     flags=re.I,
 )
+JAVA_STACK_SUFFIX_RE = re.compile(
+    r"\s+at\s+(?:[A-Za-z_$][\w$]*\.)+[A-Za-z_$][\w$]*"
+    r"\([^\r\n)]*\)\.?\s*$"
+)
 OPTIONAL_ANIMATION_PROBE_RE = re.compile(
     r"(?:^|/)steamapps/workshop/content/108600/"
     r"(?P<workshop_id>\d+)/mods/[^/]+/"
@@ -69,7 +73,8 @@ def optional_animation_probe_details(line: str) -> tuple[str, str, str] | None:
     if not exception:
         return None
 
-    path_text = exception.group("path").strip().strip("\"'").rstrip(".,;:)]}")
+    path_text = JAVA_STACK_SUFFIX_RE.sub("", exception.group("path"))
+    path_text = path_text.strip().strip("\"'").rstrip(".,;:)]}")
     normalized = path_text.replace("\\", "/")
     match = OPTIONAL_ANIMATION_PROBE_RE.search(normalized)
     if not match:
