@@ -14,6 +14,18 @@ ENV_FILE = SCRIPT_DIR / ".env"
 REPORTS_DIR = SCRIPT_DIR / "reports"
 STARTED_MARKER = "*** SERVER STARTED ****"
 TIMESTAMP_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}\b")
+NO_SUCH_FILE_PATH_RE = re.compile(
+    r"java\.nio\.file\.NoSuchFileException\s*:\s*"
+    r"(?P<path>(?:[A-Za-z]:)?[/\\][^\r\n]+)",
+    flags=re.I,
+)
+OPTIONAL_ANIMATION_PROBE_RE = re.compile(
+    r"(?:^|/)steamapps/workshop/content/108600/"
+    r"(?P<workshop_id>\d+)/mods/[^/]+/"
+    r"(?:common|\d+(?:\.\d+)*)/media/"
+    r"(?P<directory>AnimSets|actiongroups)$",
+    flags=re.I,
+)
 
 CRITICAL_PATTERNS = (
     "nullpointerexception", "kahluaexception", "outofmemoryerror",
@@ -44,6 +56,30 @@ class Event:
     line: str
     category: str
     severity: str
+
+
+def optional_animation_probe_details(line: str) -> tuple[str, str, str] | None:
+    """Return an optional PZ animation-directory probe, if this line is one.
+
+    The anchor deliberately accepts only direct conventional loader probes in
+    a Steam Workshop mod tree. Missing assets below those directories, local
+    mods, and unrelated ``NoSuchFileException`` entries remain auditable.
+    """
+    exception = NO_SUCH_FILE_PATH_RE.search(line)
+    if not exception:
+        return None
+
+    path_text = exception.group("path").strip().strip("\"'").rstrip(".,;:)]}")
+    normalized = path_text.replace("\\", "/")
+    match = OPTIONAL_ANIMATION_PROBE_RE.search(normalized)
+    if not match:
+        return None
+    return match.group("directory"), path_text, match.group("workshop_id")
+
+
+def is_optional_animation_probe(line: str) -> bool:
+    """Whether a line is a suppressible optional animation-directory probe."""
+    return optional_animation_probe_details(line) is not None
 
 
 def read_env(path: Path) -> dict[str, str]:
@@ -92,6 +128,8 @@ def classify(line: str) -> tuple[str, str] | None:
 def find_events(lines: list[str], start: int, end: int) -> list[Event]:
     events = []
     for index in range(start, end):
+        if is_optional_animation_probe(lines[index]):
+            continue
         result = classify(lines[index])
         if result:
             category, severity = result
@@ -160,6 +198,11 @@ def format_report(
     phase_lines = lines[phase_start:phase_end]
     phase_counts = counts(phase_lines)
     events = find_events(lines, phase_start, phase_end)
+    probe_details = [
+        details
+        for line in lines[phase_start:phase_end]
+        if (details := optional_animation_probe_details(line)) is not None
+    ]
     header = [
         "Project Zomboid Server Log Audit",
         f"Phase: {phase}",
@@ -167,8 +210,9 @@ def format_report(
         f"Source modification time: {datetime.fromtimestamp(source.stat().st_mtime).astimezone().isoformat()}",
         f"SERVER STARTED reached: {'yes' if marker_index is not None else 'no'}",
         f"SERVER STARTED line number: {marker_index + 1 if marker_index is not None else 'not reached'}",
-        f"Total log counts: ERROR={all_counts['ERROR']}, WARN={all_counts['WARN']}, Exception={all_counts['Exception']}",
-        f"{phase} counts: ERROR={phase_counts['ERROR']}, WARN={phase_counts['WARN']}, Exception={phase_counts['Exception']}",
+        f"Raw total log counts: ERROR={all_counts['ERROR']}, WARN={all_counts['WARN']}, Exception={all_counts['Exception']}",
+        f"Raw {phase} counts: ERROR={phase_counts['ERROR']}, WARN={phase_counts['WARN']}, Exception={phase_counts['Exception']}",
+        f"Actionable classified events: {len(events)}",
         "",
     ]
     if marker_index is None:
@@ -185,6 +229,20 @@ def format_report(
     serious = [event for event in events if event.severity != "low"]
     if phase == "runtime" and not serious:
         body.extend(["No serious runtime errors detected after server startup.", ""])
+
+    body.extend([
+        "OPTIONAL LOADER PROBES",
+        f"Animation directory probes suppressed: {len(probe_details)}",
+        f"Unique requested paths: {len({path for _, path, _ in probe_details})}",
+    ])
+    if probe_details:
+        by_directory = Counter(directory.casefold() for directory, _, _ in probe_details)
+        body.extend([
+            f"AnimSets probes: {by_directory['animsets']}",
+            f"actiongroups probes: {by_directory['actiongroups']}",
+            f"Affected Workshop items: {len({workshop_id for _, _, workshop_id in probe_details})}",
+        ])
+    body.append("")
 
     for category in ("CRITICAL / HIGH", "DEPENDENCY / CONFIG", "ANIMATION / ASSET", "LOW / NOISE", "OTHER / WARNING"):
         category_events = grouped[category]

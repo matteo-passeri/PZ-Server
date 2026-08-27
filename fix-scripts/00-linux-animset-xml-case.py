@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create case-only aliases for B42 animation assets on Linux."""
+"""Create safe Linux case-only aliases for active Workshop mod paths."""
 import os
 import re
 from pathlib import Path
@@ -22,19 +22,14 @@ PREVENTIVE_DIRECTORY_ALIASES = (
 )
 
 
-def path_is_relevant(path_text):
-    lowered = path_text.replace("\\", "/").casefold()
-    return "/mods/" in lowered and (
-        (
-            lowered.endswith(".xml")
-            and ("animset" in lowered or "actiongroup" in lowered)
-        )
-        or "/mods/common" in lowered
-    )
-
-
 def missing_paths(log_path):
-    """Extract only missing AnimSet/XML or Common-path candidates from a log."""
+    """Extract absolute paths from log lines which report a missing resource.
+
+    Active Workshop/mod-tree validation is intentionally deferred to
+    ``relative_to_workshop`` and ``resolve_case_only_path``.  That allows
+    log-driven repair of any case-only mismatch without treating log text as
+    authority to modify paths outside an active Workshop mod.
+    """
     paths = []
 
     for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -45,7 +40,7 @@ def missing_paths(log_path):
         for pattern in (QUOTED_PATH, UNQUOTED_PATH):
             for match in pattern.finditer(line):
                 path_text = match.group("path").rstrip(".,;:)]}")
-                if path_is_relevant(path_text) and path_text not in paths:
+                if Path(path_text).is_absolute() and path_text not in paths:
                     paths.append(path_text)
 
     return paths
@@ -226,7 +221,7 @@ def resolve_case_only_path(path_text, workshop, active_workshop_ids):
         is_leaf = index == len(suffix) - 1
         if not is_leaf and not source.is_dir():
             return "unfixable", []
-        if is_leaf and path_text.casefold().endswith(".xml") and not source.is_file():
+        if is_leaf and Path(requested_name).suffix and not source.is_file():
             return "unfixable", []
 
         aliases.append((source, exact))
