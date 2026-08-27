@@ -1,3 +1,6 @@
+import json
+import struct
+
 import pytest
 
 from conftest import FIX_SCRIPTS as FIX_DIR, fix_context, load_path_module
@@ -76,3 +79,76 @@ def test_log_driven_case_fix_rebases_container_workshop_paths_safely(tmp_path):
     (mod_root / "other.lua").write_text("one", encoding="utf-8")
     (mod_root / "OTHER.LUA").write_text("two", encoding="utf-8")
     assert module.resolve_case_only_path(str(mod_root / "Other.lua"), workshop, ("123",))[0] == "ambiguous"
+
+
+def make_glb(document, binary):
+    json_data = json.dumps(document, separators=(",", ":")).encode("utf-8")
+    json_data += b" " * (-len(json_data) % 4)
+    binary += b"\0" * (-len(binary) % 4)
+    payload = (
+        struct.pack("<I4s", len(json_data), b"JSON")
+        + json_data
+        + struct.pack("<I4s", len(binary), b"BIN\0")
+        + binary
+    )
+    return struct.pack("<4sII", b"glTF", 2, 12 + len(payload)) + payload
+
+
+def test_radarchery_glb_fix_removes_only_named_channels_and_is_byte_idempotent(tmp_path):
+    module = load_path_module(FIX_DIR / "40-radarchery-bob-glb-channels.py")
+    workshop = tmp_path / "workshop"
+    path = workshop / module.WORKSHOP_ID / module.BOB_RELATIVE / "bow.glb"
+    path.parent.mkdir(parents=True)
+    unsupported_names = sorted(module.UNSUPPORTED_NODE_NAMES)
+    document = {
+        "asset": {"version": "2.0"},
+        "nodes": ([{"name": name} for name in unsupported_names]
+                  + [{"name": "Bip01_Spine"}]),
+        "skins": [{"joints": [5]}],
+        "accessors": [{"bufferView": 0}],
+        "bufferViews": [{"buffer": 0, "byteLength": 4}],
+        "buffers": [{"byteLength": 4}],
+        "meshes": [{"primitives": []}],
+        "materials": [{"name": "unchanged"}],
+        "animations": [{
+            "samplers": [{"input": 0, "output": 0}],
+            "channels": (
+                [
+                    {"sampler": 0, "target": {"node": index, "path": "rotation"}}
+                    for index in range(len(unsupported_names))
+                ]
+                + [{"sampler": 0, "target": {"node": 5, "path": "scale"}}]
+            ),
+        }],
+    }
+    path.write_bytes(make_glb(document, b"\x01\x02\x03\x04"))
+    before_document, before_chunks = module.parse_glb(path.read_bytes())
+
+    messages = []
+    assert module.FIX["run"](fix_context(workshop, messages.append))
+    after_data = path.read_bytes()
+    after_document, after_chunks = module.parse_glb(after_data)
+    assert len(after_document["animations"][0]["channels"]) == 1
+    assert after_document["animations"][0]["channels"][0]["target"]["node"] == 5
+    for section in module.PROTECTED_SECTIONS:
+        assert after_document[section] == before_document[section]
+    assert after_chunks[1:] == before_chunks[1:]
+    assert "files changed=1; channels removed=5" in messages[-1]
+
+    assert not module.FIX["run"](fix_context(workshop, messages.append))
+    assert path.read_bytes() == after_data
+    assert "files changed=0; channels removed=0" in messages[-1]
+
+
+def test_radarchery_glb_fix_leaves_malformed_file_untouched(tmp_path):
+    module = load_path_module(FIX_DIR / "40-radarchery-bob-glb-channels.py")
+    workshop = tmp_path / "workshop"
+    path = workshop / module.WORKSHOP_ID / module.BOB_RELATIVE / "broken.glb"
+    path.parent.mkdir(parents=True)
+    original = b"not a GLB"
+    path.write_bytes(original)
+    messages = []
+
+    assert not module.FIX["run"](fix_context(workshop, messages.append))
+    assert path.read_bytes() == original
+    assert "blocked; leaving broken.glb untouched" in messages[0]

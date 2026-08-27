@@ -13,7 +13,8 @@ whole checkout to the server root and run all commands from there.
 - Reorders generated mod lists using configurable load-order rules, so required
   mods can be placed first, before or after other mods, or last.
 - Applies safe, idempotent local compatibility fixes to downloaded Workshop
-  content, including targeted Linux filesystem case aliases.
+  content, including targeted Linux filesystem case aliases and the narrowly
+  scoped RadArchery B42 Bob GLB channel repair (Workshop `3775407541`).
 - Detects Workshop updates, waits for an empty server, then performs a guarded
   recreate and verification workflow.
 - Audits the latest server DebugLog into readable startup and on-demand runtime
