@@ -25,6 +25,12 @@ JAVA_STACK_SUFFIX = re.compile(
     r"\s+at\s+(?:[A-Za-z_$][\w$]*\.)+[A-Za-z_$][\w$]*"
     r"\([^\r\n)]*\)\.?\s*$"
 )
+WORKSHOP_PATH_MARKER = (
+    "steamapps",
+    "workshop",
+    "content",
+    "108600",
+)
 PREVENTIVE_DIRECTORY_ALIASES = (
     ("AnimSets", "animsets"),
     ("ActionGroups", "actiongroups"),
@@ -70,21 +76,31 @@ def missing_paths(log_path):
 
 
 def relative_to_workshop(path_text, workshop, active_workshop_ids):
-    """Validate an absolute log path and return its active Workshop suffix."""
+    """Validate an absolute log path and return its active Workshop suffix.
+
+    PZ writes container paths while this fix runs on the host.  The path is
+    therefore matched by its canonical Steam Workshop suffix, then all actual
+    filesystem work is still rooted at the configured host ``workshop`` path.
+    """
     raw = Path(path_text)
     if not raw.is_absolute():
         return None
 
     raw_parts = raw.parts
-    root_parts = workshop.parts
-    if len(raw_parts) <= len(root_parts):
-        return None
-    if tuple(part.casefold() for part in raw_parts[:len(root_parts)]) != tuple(
-        part.casefold() for part in root_parts
-    ):
+    if any(part in ("", ".", "..") for part in raw_parts[1:]):
         return None
 
-    suffix = raw_parts[len(root_parts):]
+    marker_length = len(WORKSHOP_PATH_MARKER)
+    marker_indexes = [
+        index
+        for index in range(len(raw_parts) - marker_length + 1)
+        if tuple(part.casefold() for part in raw_parts[index:index + marker_length])
+        == WORKSHOP_PATH_MARKER
+    ]
+    if len(marker_indexes) != 1:
+        return None
+
+    suffix = raw_parts[marker_indexes[0] + marker_length:]
     if len(suffix) < 3 or suffix[0] not in active_workshop_ids:
         return None
     if suffix[1].casefold() != "mods":
@@ -228,9 +244,15 @@ def resolve_case_only_path(path_text, workshop, active_workshop_ids):
     if suffix is None:
         return "outside_active_tree", []
 
+    workshop_root = workshop.resolve()
     current = workshop
     aliases = []
     for index, requested_name in enumerate(suffix):
+        try:
+            current.resolve().relative_to(workshop_root)
+        except ValueError:
+            return "outside_active_tree", []
+
         exact = current / requested_name
         if exact.exists() or exact.is_symlink():
             current = exact
@@ -241,6 +263,11 @@ def resolve_case_only_path(path_text, workshop, active_workshop_ids):
             return ("ambiguous" if matches else "unfixable"), []
 
         source = matches[0]
+        try:
+            source.resolve().relative_to(workshop_root)
+        except ValueError:
+            return "outside_active_tree", []
+
         is_leaf = index == len(suffix) - 1
         if not is_leaf and not source.is_dir():
             return "unfixable", []

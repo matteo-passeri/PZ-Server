@@ -13,11 +13,14 @@ def test_audit_filters_optional_probe_blocks_and_keeps_real_animation(tmp_path):
     frames = [
         "    at zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator.searchFolders(AdvancedAnimator.java:1)",
         "    at zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator.load(AdvancedAnimator.java:2)",
+        "java.base/sun.nio.fs.UnixException.rethrowAsIOException(UnixException.java:111)",
+        "  at java.base/sun.nio.fs.UnixException.translateToIOException(UnixException.java:92)",
     ]
-    analysis = audit.analyze_optional_probe_blocks([optional, *frames], 0, 3)
+    analysis = audit.analyze_optional_probe_blocks([optional, *frames], 0, 5)
     assert len(analysis.details) == 1
-    assert analysis.suppressed_line_indexes == {0, 1, 2}
-    assert audit.find_events([optional, *frames], 0, 3) == []
+    assert analysis.suppressed_line_indexes == {0, 1, 2, 3, 4}
+    assert audit.find_events([optional, *frames], 0, 5) == []
+    assert audit.classify(frames[2]) is None
     assert audit.classify('LOG : Mod "damnlib" overrides media/animsets/player/foo.xml.') is None
     assert audit.classify("Animation: Warning.") is None
     assert audit.classify("ERROR: Could not find bone index for Bip01_Root")[0] == "ANIMATION / ASSET"
@@ -30,10 +33,14 @@ def test_audit_report_uses_filtered_events_for_common_errors(tmp_path):
     source = tmp_path / "DebugLog-server.txt"
     source.write_text("fixture\n", encoding="utf-8")
     probe = "java.nio.file.NoSuchFileException: /x/steamapps/workshop/content/108600/123/mods/Foo/common/media/actiongroups at UnixException.translateToIOException(null:-1)."
-    frame = "    at zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator.load(AdvancedAnimator.java:2)"
-    report = audit.format_report(source, [probe, frame], "startup", 0, 2, None)
+    frames = [
+        "java.base/sun.nio.fs.UnixException.rethrowAsIOException(UnixException.java:111)",
+        "at java.base/sun.nio.fs.UnixException.translateToIOException(UnixException.java:92)",
+    ]
+    report = audit.format_report(source, [probe, *frames], "startup", 0, 3, None)
     assert "Suppressed optional animation directory probes: 1" in report
-    assert "AdvancedAnimator.load" not in report
+    assert "UnixException.rethrowAsIOException" not in report
+    assert "UnixException.translateToIOException" not in report
     assert "Most common errors\nNone." in report
 
 

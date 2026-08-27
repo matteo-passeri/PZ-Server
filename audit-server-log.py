@@ -19,13 +19,15 @@ NO_SUCH_FILE_PATH_RE = re.compile(
     r"(?P<path>(?:[A-Za-z]:)?[/\\][^\r\n]+)",
     flags=re.I,
 )
+JAVA_STACK_TARGET_RE = (
+    r"(?:[A-Za-z_$][\w$]*(?:[./][A-Za-z_$][\w$]*)*)"
+    r"\.[A-Za-z_$][\w$]*"
+)
 JAVA_STACK_SUFFIX_RE = re.compile(
-    r"\s+at\s+(?:[A-Za-z_$][\w$]*\.)+[A-Za-z_$][\w$]*"
-    r"\([^\r\n)]*\)\.?\s*$"
+    r"\s+at\s+" + JAVA_STACK_TARGET_RE + r"\([^\r\n)]*\)\.?\s*$"
 )
 JAVA_STACK_FRAME_RE = re.compile(
-    r"\s*at\s+(?:[A-Za-z_$][\w$]*\.)+[A-Za-z_$][\w$]*"
-    r"\([^\r\n)]*\)\.?\s*$"
+    r"\s*(?:at\s+)?" + JAVA_STACK_TARGET_RE + r"\([^\r\n)]*\)\.?\s*$"
 )
 JAVA_STACK_CONTINUATION_RE = re.compile(r"\s*\.\.\.\s+\d+\s+more\s*$")
 LOG_PROBLEM_LEVEL_RE = re.compile(r"(?:^|[\s\]])(?:ERROR|WARN(?:ING)?)\s*:", re.I)
@@ -164,7 +166,10 @@ def latest_debug_log(env: dict[str, str]) -> Path:
 def classify(line: str) -> tuple[str, str] | None:
     lowered = line.casefold()
     lua_nil = re.search(r"attempt to (call|index).{0,100}nil", lowered)
-    has_problem_level = bool(LOG_PROBLEM_LEVEL_RE.search(line) or JAVA_EXCEPTION_RE.search(line))
+    has_problem_level = bool(
+        LOG_PROBLEM_LEVEL_RE.search(line)
+        or (JAVA_EXCEPTION_RE.search(line) and not is_java_stack_continuation(line))
+    )
     if any(pattern in lowered for pattern in CRITICAL_PATTERNS) or lua_nil:
         return "CRITICAL / HIGH", "critical"
     if any(pattern in lowered for pattern in DEPENDENCY_PATTERNS):

@@ -36,3 +36,43 @@ def test_hot_brass_aliases_are_idempotent_and_do_not_overwrite(tmp_path):
     assert module.FIX["run"](fix_context(workshop))
     assert (animsets / "player.xml").is_symlink()
     assert not module.FIX["run"](fix_context(workshop))
+
+
+def test_log_driven_case_fix_rebases_container_workshop_paths_safely(tmp_path):
+    module = load_path_module(FIX_DIR / "00-linux-animset-xml-case.py")
+    workshop = tmp_path / "host/steamapps/workshop/content/108600"
+    mod_root = workshop / "123/mods/Vehicle Repair Overhaul/42/media/scripts"
+    mod_root.mkdir(parents=True)
+    (mod_root / "test.lua").write_text("lua", encoding="utf-8")
+    container_path = (
+        "/home/steam/zomboid/steamapps/workshop/content/108600/123/mods/"
+        "Vehicle Repair Overhaul/42/media/scripts/Test.lua"
+    )
+    host_path = str(mod_root / "Test.lua")
+    expected_suffix = ("123", "mods", "Vehicle Repair Overhaul", "42", "media", "scripts", "Test.lua")
+    assert module.relative_to_workshop(container_path, workshop, ("123",)) == expected_suffix
+    assert module.relative_to_workshop(host_path, workshop, ("123",)) == expected_suffix
+    assert module.resolve_case_only_path(host_path, workshop, ("123",))[0] == "resolved"
+    assert module.relative_to_workshop(container_path.replace("/123/mods/", "/999/mods/"), workshop, ("123",)) is None
+    assert module.relative_to_workshop(container_path.replace("/123/mods/", "/123/notmods/"), workshop, ("123",)) is None
+    assert module.relative_to_workshop("/home/steam/zomboid/unrelated/108600/123/mods/Foo/a.lua", workshop, ("123",)) is None
+    assert module.relative_to_workshop(container_path.replace("/scripts/", "/../scripts/"), workshop, ("123",)) is None
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (workshop / "123/mods/Escaped").symlink_to(outside, target_is_directory=True)
+    escaped = "/home/steam/zomboid/steamapps/workshop/content/108600/123/mods/Escaped/Foo.lua"
+    assert module.resolve_case_only_path(escaped, workshop, ("123",))[0] == "outside_active_tree"
+
+    log = tmp_path / "server.log"
+    log.write_text(f"java.nio.file.NoSuchFileException: {container_path}\n", encoding="utf-8")
+    ctx = fix_context(workshop)
+    ctx.update({"active_workshop_ids": ("123",), "latest_pz_server_log": lambda: log})
+    assert module.FIX["run"](ctx)
+    assert (mod_root / "Test.lua").is_symlink()
+    assert not module.FIX["run"](ctx)
+
+    zero = mod_root / "Missing.lua"
+    assert module.resolve_case_only_path(str(zero), workshop, ("123",))[0] == "unfixable"
+    (mod_root / "other.lua").write_text("one", encoding="utf-8")
+    (mod_root / "OTHER.LUA").write_text("two", encoding="utf-8")
+    assert module.resolve_case_only_path(str(mod_root / "Other.lua"), workshop, ("123",))[0] == "ambiguous"
