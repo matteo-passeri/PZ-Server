@@ -81,6 +81,7 @@ MOD_LOAD_FIRST = (
 )
 MOD_LOAD_BEFORE = [
     ("HBVCEFb42", "SWMG"),
+    ("NeatUI_Framework", "CleanUI"),
     ("NeatUI_Framework", "Neat_Crafting"),
     ("NeatUI_Framework", "Project_Cook"),
     ("Neat_Crafting", "Project_Cook"),
@@ -165,6 +166,7 @@ def parse_mod_info(path: Path) -> dict[str, list[str]]:
         "loadmodafter": [],
         "loadmodbefore": [],
         "require": [],
+        "incompatible": [],
     }
 
     try:
@@ -182,10 +184,9 @@ def parse_mod_info(path: Path) -> dict[str, list[str]]:
         if key not in fields:
             continue
 
-        # PZ commonly separates multi-value metadata fields with semicolons.
-        # This metadata is only inspected for now; require= does not create an
-        # automatic load-order edge.  An id= value itself remains singular.
-        values = [value] if key == "id" else value.split(";")
+        # id= remains singular. B42 multi-value metadata accepts both comma
+        # and semicolon separators; require= is validation, not an order edge.
+        values = [value] if key == "id" else re.split(r"[;,]", value)
         for item in values:
             item = item.strip()
             if key != "id":
@@ -1033,6 +1034,7 @@ def active_mod_load_order_edges(
     load_after: list[tuple[str, str]] = MOD_LOAD_AFTER,
     load_first: tuple[str, ...] = MOD_LOAD_FIRST,
     load_last: tuple[str, ...] | str = MOD_LOAD_LAST,
+    mod_info_edges: list[tuple[str, str]] | None = None,
 ) -> list[tuple[str, str]]:
     """Return applicable directed Mod ID ordering edges without duplicates."""
     load_first = normalize_mod_load_group(load_first)
@@ -1075,6 +1077,9 @@ def active_mod_load_order_edges(
         add_edge(before, after)
 
     for after, before in load_after:
+        add_edge(before, after)
+
+    for before, after in mod_info_edges or []:
         add_edge(before, after)
 
     active_first = [mod_id for mod_id in load_first if mod_id in active]
@@ -1137,6 +1142,7 @@ def reorder_mod_ids(
     load_after: list[tuple[str, str]] = MOD_LOAD_AFTER,
     load_first: tuple[str, ...] = MOD_LOAD_FIRST,
     load_last: tuple[str, ...] | str = MOD_LOAD_LAST,
+    mod_info_edges: list[tuple[str, str]] | None = None,
 ) -> list[str]:
     """Apply hard rules with a stable topological sort of active Mod IDs.
 
@@ -1151,6 +1157,7 @@ def reorder_mod_ids(
         load_after,
         load_first,
         load_last,
+        mod_info_edges,
     )
     original_index = {mod_id: index for index, mod_id in enumerate(ordered_ids)}
     successors = {mod_id: [] for mod_id in ordered_ids}
@@ -1179,7 +1186,7 @@ def reorder_mod_ids(
             "Contradictory Mod ID load-order rules (cycle: "
             + " -> ".join(cycle)
             + "). Check MOD_LOAD_FIRST, MOD_LOAD_BEFORE, MOD_LOAD_AFTER, "
-            "and MOD_LOAD_LAST."
+            "MOD_LOAD_LAST, and active mod.info metadata."
         )
 
     return result
@@ -1191,6 +1198,7 @@ def mod_load_order_adjustments(
     load_after: list[tuple[str, str]] = MOD_LOAD_AFTER,
     load_first: tuple[str, ...] = MOD_LOAD_FIRST,
     load_last: tuple[str, ...] | str = MOD_LOAD_LAST,
+    mod_info_edges: list[tuple[str, str]] | None = None,
 ) -> list[str]:
     """Describe only hard-rule changes, keeping normal output concise."""
     load_first = normalize_mod_load_group(load_first)
@@ -1202,6 +1210,7 @@ def mod_load_order_adjustments(
         load_after,
         load_first,
         load_last,
+        mod_info_edges,
     )
     original_index = {
         mod_id: index for index, mod_id in enumerate(ordered_original)
@@ -1235,6 +1244,16 @@ def mod_load_order_adjustments(
             and (before, after) not in described_edges
         ):
             adjustments.append(f"{after} moved after {before}")
+            described_edges.add((before, after))
+
+    for before, after in mod_info_edges or []:
+        if (
+            before in active
+            and after in active
+            and original_index[before] > original_index[after]
+            and (before, after) not in described_edges
+        ):
+            adjustments.append(f"{before} moved before {after} (mod.info)")
             described_edges.add((before, after))
 
     for mod_id in load_last:
@@ -1296,19 +1315,24 @@ def extract_local_mod_ids(
     discovered Mod ID. One variant is selected for each mod, preferring 42.20,
     then 42, then the unversioned variant.
     """
-    item_root = workshop_root / workshop_id
-    mods_root = item_root / "mods"
+    return [
+        item["mod_id"]
+        for item in extract_local_mod_metadata(workshop_root, workshop_id)
+    ]
 
+
+def extract_local_mod_metadata(
+    workshop_root: Path,
+    workshop_id: str,
+) -> list[dict[str, Any]]:
+    """Return selected B42 mod.info metadata without activating extra Mod IDs."""
+    mods_root = workshop_root / workshop_id / "mods"
     if not mods_root.is_dir():
         return []
 
-    out: list[str] = []
-
-    for mod_root in sorted(
-        p
-        for p in mods_root.iterdir()
-        if p.is_dir()
-    ):
+    out: list[dict[str, Any]] = []
+    seen_mod_ids: set[str] = set()
+    for mod_root in sorted(p for p in mods_root.iterdir() if p.is_dir()):
         candidates = sorted(
             mod_root.rglob("mod.info"),
             key=lambda p: mod_info_rank(
@@ -1330,14 +1354,77 @@ def extract_local_mod_ids(
         if best_rank >= 4:
             continue
 
-        mod_id = read_mod_id_from_info(
-            candidates[0]
-        )
+        selected = candidates[0]
+        parsed = parse_mod_info(selected)
+        mod_id = read_mod_id_from_info(selected)
 
-        if mod_id and mod_id not in out:
-            out.append(mod_id)
+        if mod_id and mod_id not in seen_mod_ids:
+            seen_mod_ids.add(mod_id)
+            out.append({
+                "workshop_id": workshop_id,
+                "mod_id": mod_id,
+                "mod_info": str(selected),
+                "require": parsed["require"],
+                "incompatible": parsed["incompatible"],
+                "loadmodafter": parsed["loadmodafter"],
+                "loadmodbefore": parsed["loadmodbefore"],
+            })
 
     return out
+
+
+def mod_info_runtime_rules(
+    active_mod_ids: list[str],
+    metadata: list[dict[str, Any]],
+) -> tuple[list[tuple[str, str]], list[dict[str, str]], list[dict[str, Any]]]:
+    """Build active mod.info order edges and diagnostics without auto-fixing mods."""
+    active = set(active_mod_ids)
+    edges: list[tuple[str, str]] = []
+    missing: list[dict[str, str]] = []
+    missing_keys: set[tuple[str, str]] = set()
+    conflicts: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def add_edge(before: str, after: str) -> None:
+        if before != after and before in active and after in active and (before, after) not in edges:
+            edges.append((before, after))
+
+    for item in metadata:
+        mod_id = item.get("mod_id")
+        if not isinstance(mod_id, str) or mod_id not in active:
+            continue
+        workshop_id = str(item.get("workshop_id", ""))
+        mod_info = str(item.get("mod_info", ""))
+        for target in item.get("loadmodafter", []):
+            if isinstance(target, str):
+                add_edge(target, mod_id)
+        for target in item.get("loadmodbefore", []):
+            if isinstance(target, str):
+                add_edge(mod_id, target)
+        for required in item.get("require", []):
+            if (
+                isinstance(required, str)
+                and required not in active
+                and (mod_id, required) not in missing_keys
+            ):
+                missing_keys.add((mod_id, required))
+                missing.append({
+                    "mod_id": mod_id,
+                    "required_mod_id": required,
+                    "workshop_id": workshop_id,
+                    "source": mod_info,
+                })
+        for incompatible in item.get("incompatible", []):
+            if not isinstance(incompatible, str) or incompatible not in active or incompatible == mod_id:
+                continue
+            key = tuple(sorted((mod_id, incompatible)))
+            conflicts.setdefault(key, {
+                "mods": list(key),
+                "reason": "declared incompatible in mod.info",
+                "source": "mod.info",
+                "workshop_id": workshop_id,
+                "mod_info": mod_info,
+            })
+    return edges, missing, list(conflicts.values())
 
 
 def select_workshop_mod_ids(
@@ -1754,12 +1841,14 @@ def main() -> int:
             desc,
         )
 
+        local_mod_metadata: list[dict[str, Any]] = []
         local_mids: list[str] = []
         if workshop_root.is_dir():
-            local_mids = extract_local_mod_ids(
+            local_mod_metadata = extract_local_mod_metadata(
                 workshop_root,
                 wid,
             )
+            local_mids = [item["mod_id"] for item in local_mod_metadata]
 
         discovered_mids = list(dict.fromkeys(
             description_mids + local_mids + (MOD_ID_OVERRIDES.get(wid) or [])
@@ -1882,6 +1971,7 @@ def main() -> int:
             "title": title,
             "mod_ids": valid_mids,
             "discovered_mod_ids": discovered_mids,
+            "local_mod_metadata": local_mod_metadata,
             "map_names": valid_maps,
             "is_map_mod": wid in map_workshop_ids,
             "time_created": d.get("time_created"),
@@ -1972,16 +2062,33 @@ def main() -> int:
             print(f"[PZ-MODS] Manual blacklist removed {decision['mod_id']}")
         elif decision["reason"] == "project always_exclude":
             print(f"[PZ-MODS] Excluding {decision['mod_id']}: project always_exclude")
+    active_mod_info_metadata = [
+        item
+        for record in records
+        for item in record["local_mod_metadata"]
+    ]
+    mod_info_edges, missing_required_mods, mod_info_conflicts = mod_info_runtime_rules(
+        mod_ids,
+        active_mod_info_metadata,
+    )
+    existing_conflict_keys = {tuple(sorted(conflict["mods"])) for conflict in conflicts}
+    for conflict in mod_info_conflicts:
+        if tuple(sorted(conflict["mods"])) not in existing_conflict_keys:
+            conflicts.append(conflict)
+            existing_conflict_keys.add(tuple(sorted(conflict["mods"])))
     for conflict in conflicts:
         print(f"[PZ-MODS] Conflict: {' and '.join(conflict['mods'])} are both active", file=sys.stderr)
     resolved_mod_ids = list(mod_ids)
     try:
-        mod_ids = reorder_mod_ids(mod_ids)
+        mod_ids = reorder_mod_ids(mod_ids, mod_info_edges=mod_info_edges)
     except ModLoadOrderError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    load_order_adjustments = mod_load_order_adjustments(resolved_mod_ids)
+    load_order_adjustments = mod_load_order_adjustments(
+        resolved_mod_ids,
+        mod_info_edges=mod_info_edges,
+    )
 
     if load_order_adjustments:
         print("Mod load-order adjustments:")
@@ -2054,6 +2161,12 @@ def main() -> int:
             for rule in effective_prefer_rules
         ],
         "inferred_removed_variant_pairs": inferred_rule_diagnostics,
+        "mod_info_load_order_edges": [
+            {"before": before, "after": after, "source": "mod.info"}
+            for before, after in mod_info_edges
+        ],
+        "missing_required_mods": missing_required_mods,
+        "mod_info_conflicts": mod_info_conflicts,
         "mod_rule_decisions": mod_rule_decisions,
         "workshop_decisions": workshop_decisions,
         "conflicts": conflicts,
@@ -2115,6 +2228,9 @@ def main() -> int:
         ),
         f"Duplicate Mod IDs: {len(duplicate_mod_ids)}",
         f"Duplicate maps: {len(duplicate_maps)}",
+        f"Active mod.info load-order edges: {len(mod_info_edges)}",
+        f"Missing required Mod IDs: {len(missing_required_mods)}",
+        f"mod.info conflicts: {len(mod_info_conflicts)}",
         "",
         "CHANGES SINCE PREVIOUS RUN",
         "-" * 39,
@@ -2225,6 +2341,21 @@ def main() -> int:
     )
 
     section(
+        "MOD.INFO LOAD-ORDER RULES",
+        [f"{before} -> {after}" for before, after in mod_info_edges],
+    )
+
+    section(
+        "MISSING REQUIRED MOD IDS",
+        [
+            f"{item['mod_id']} requires {item['required_mod_id']}\n"
+            f"  Workshop: {item['workshop_id']}\n"
+            f"  source: {item['source']}"
+            for item in missing_required_mods
+        ],
+    )
+
+    section(
         "AUTOMATIC MOD RULES",
         [
             (
@@ -2306,6 +2437,7 @@ def main() -> int:
             " <-> ".join(conflict["mods"])
             + "\n  both remain active"
             + (f"\n  reason: {conflict['reason']}" if conflict.get("reason") else "")
+            + (f"\n  source: {conflict['source']}" if conflict.get("source") else "")
             for conflict in conflicts
         ],
     )

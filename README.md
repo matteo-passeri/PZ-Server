@@ -190,6 +190,23 @@ appended after project exclusions and preferences, so a forced ID can override
 an exclusion. Conflicting blacklist/forced entries are warned about and forced
 inclusion wins.
 
+### Build 42 `mod.info` metadata
+
+For each selected local Build 42 `mod.info`, the generator reads `require`,
+`incompatible`, `loadModAfter`, and `loadModBefore` in addition to `id`.
+Comma- and semicolon-separated values are supported. `loadModAfter` and
+`loadModBefore` contribute active edges to the existing stable topological
+sort; curated built-in rules such as `NeatUI_Framework -> CleanUI` are merged
+and deduplicated with those edges. Curated rules remain useful where upstream
+metadata is absent or incomplete.
+
+`require` is dependency validation only: a missing active requirement is
+reported but is neither added nor used as a load-order edge. `incompatible`
+reports a conflict without selecting a winner. The generated report and JSON
+identify these diagnostics and their `mod.info` source path. Administrator
+blacklists/forced IDs and `mod-rules.toml` resolution still determine which Mod
+IDs are active before this metadata is evaluated.
+
 For example, a collection containing `WorkingGutters` and
 `WorkingGuttersRemoved` keeps `WorkingGutters`. With
 `PZ_MOD_BLACKLIST_MODS=WorkingGutters`, the winner is removed before preference

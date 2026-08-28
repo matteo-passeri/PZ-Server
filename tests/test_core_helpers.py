@@ -110,8 +110,15 @@ def test_world_dictionary_removed_mod_audit_uses_declared_fallback_only(tmp_path
 def test_generator_parses_mod_info_and_orders_hard_rules(tmp_path):
     generator = load_path_module(ROOT / "generate-mod-list.py")
     info = tmp_path / "mod.info"
-    info.write_text("id=Foo\nloadmodafter=\\Bar;Baz\n", encoding="utf-8")
-    assert generator.parse_mod_info(info)["loadmodafter"] == ["Bar", "Baz"]
+    info.write_text(
+        "id=Foo\nloadmodafter=\\Bar;Baz,Qux\n"
+        "require=LibraryA, LibraryB\nincompatible=BadA; BadB\n",
+        encoding="utf-8",
+    )
+    parsed = generator.parse_mod_info(info)
+    assert parsed["loadmodafter"] == ["Bar", "Baz", "Qux"]
+    assert parsed["require"] == ["LibraryA", "LibraryB"]
+    assert parsed["incompatible"] == ["BadA", "BadB"]
     assert generator.normalize_collection_ids(["1, 2", "2"]) == ["1", "2"]
     assert generator.reorder_mod_ids(
         ["third", "first", "second"],
@@ -122,6 +129,62 @@ def test_generator_parses_mod_info_and_orders_hard_rules(tmp_path):
     ) == ["first", "second", "third"]
     with pytest.raises(generator.ModLoadOrderError):
         generator.reorder_mod_ids(["a", "b"], [("a", "b"), ("b", "a")], [], (), ())
+
+
+def test_mod_info_runtime_rules_validate_dependencies_conflicts_and_order():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    metadata = [{
+        "workshop_id": "123",
+        "mod_id": "Feature",
+        "mod_info": "/workshop/123/mods/Feature/42/mod.info",
+        "require": ["Library", "Missing"],
+        "incompatible": ["Bad"],
+        "loadmodafter": ["Library"],
+        "loadmodbefore": ["Late"],
+    }, {
+        "workshop_id": "456",
+        "mod_id": "Bad",
+        "mod_info": "/workshop/456/mod.info",
+        "require": [],
+        "incompatible": ["Feature"],
+        "loadmodafter": [],
+        "loadmodbefore": [],
+    }]
+    edges, missing, conflicts = generator.mod_info_runtime_rules(
+        ["Feature", "Library", "Late", "Bad"], metadata,
+    )
+    assert edges == [("Library", "Feature"), ("Feature", "Late")]
+    assert missing == [{
+        "mod_id": "Feature", "required_mod_id": "Missing", "workshop_id": "123",
+        "source": "/workshop/123/mods/Feature/42/mod.info",
+    }]
+    assert conflicts == [{
+        "mods": ["Bad", "Feature"], "reason": "declared incompatible in mod.info",
+        "source": "mod.info", "workshop_id": "123",
+        "mod_info": "/workshop/123/mods/Feature/42/mod.info",
+    }]
+    # require= is validation only, never a synthetic load-order edge.
+    assert generator.mod_info_runtime_rules(["Feature", "Library"], [{
+        **metadata[0], "require": ["Library"], "loadmodafter": [], "loadmodbefore": [],
+    }])[0] == []
+
+
+def test_mod_info_edges_deduplicate_with_curated_rules_and_keep_cycle_detection():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    edges = generator.active_mod_load_order_edges(
+        ["NeatUI_Framework", "CleanUI"],
+        mod_info_edges=[("NeatUI_Framework", "CleanUI")],
+    )
+    assert edges.count(("NeatUI_Framework", "CleanUI")) == 1
+    with pytest.raises(generator.ModLoadOrderError):
+        generator.reorder_mod_ids(
+            ["A", "B"],
+            load_before=[("A", "B")],
+            load_after=[],
+            load_first=(),
+            load_last=(),
+            mod_info_edges=[("B", "A")],
+        )
 
 
 def test_update_checker_configuration_state_and_remote_diff(tmp_path):
