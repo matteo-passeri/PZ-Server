@@ -58,6 +58,55 @@ def test_startup_audit_selects_current_log_and_parses_podman_time(tmp_path, monk
     assert startup.container_start_time("pz") > 0
 
 
+def test_successful_mod_state_is_atomic_and_only_written_after_startup_marker(tmp_path, capsys):
+    state = importlib.import_module("mod_active_state")
+    startup = load_path_module(ROOT / "run-startup-audit.py")
+    path = state.state_file(tmp_path)
+    assert state.read_last_active_mods(path, lambda _: None) == []
+    path.write_text("not json", encoding="utf-8")
+    assert state.read_last_active_mods(path, lambda message: print(message)) == []
+    assert "Ignoring malformed successful-mod state" in capsys.readouterr().out
+    # A failed generation/startup never calls this function, so prior state
+    # stays intact until the caller has observed SERVER STARTED.
+    state.write_last_active_mods(path, ["Previous"])
+    startup.record_successful_mod_state({"PZ_MOD_NAMES": "A;B;A"}, tmp_path)
+    assert state.read_last_active_mods(path, lambda _: None) == ["A", "B"]
+
+
+def test_failed_startup_does_not_replace_successful_mod_state(tmp_path):
+    state = importlib.import_module("mod_active_state")
+    startup = load_path_module(ROOT / "run-startup-audit.py")
+    path = state.state_file(tmp_path)
+    state.write_last_active_mods(path, ["Previous"])
+    assert startup.wait_for_startup_log(
+        tmp_path, 0, timeout=0, poll_interval=0, clock=lambda: 0, sleep=lambda _: None,
+    ) is None
+    assert state.read_last_active_mods(path, lambda _: None) == ["Previous"]
+
+
+def test_world_dictionary_removed_mod_audit_uses_declared_fallback_only(tmp_path):
+    audit = load_path_module(ROOT / "audit-server-log.py")
+    source = tmp_path / "DebugLog-server.txt"
+    source.write_text("fixture\n", encoding="utf-8")
+    lines = [
+        "ERROR: WorldDictionaryException",
+        'removed = true modID = "SomeMod"',
+        "Cannot load world due to WorldDictionary error",
+        "ERROR: WorldDictionaryException",
+        "removed = true modID = UnknownMod",
+    ]
+    assert audit.classify(lines[0])[0] == "WORLD DICTIONARY / REMOVED MOD"
+    findings = audit.find_world_dictionary_removed_mods(lines, 0, len(lines))
+    assert [finding.mod_id for finding in findings] == ["SomeMod", "UnknownMod"]
+    report = audit.format_report(
+        source, lines, "startup", 0, len(lines), None,
+        {"SomeMod": "SomeModRemoved"},
+    )
+    assert "Known fallback: SomeModRemoved" in report
+    assert "No declared fallback; manual investigation required." in report
+    assert "UnknownModRemoved" not in report
+
+
 def test_generator_parses_mod_info_and_orders_hard_rules(tmp_path):
     generator = load_path_module(ROOT / "generate-mod-list.py")
     info = tmp_path / "mod.info"

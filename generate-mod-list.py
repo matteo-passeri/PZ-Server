@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
+from mod_active_state import read_last_active_mods, state_file
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_ENV_FILE = SCRIPT_DIR / ".env"
@@ -48,6 +49,7 @@ class PreferRule:
     losers: tuple[str, ...]
     reason: str | None = None
     enabled: bool = True
+    removed_fallback: str | None = None
 
 
 @dataclass(frozen=True)
@@ -318,8 +320,8 @@ def load_mod_rules(path: Path = RULES_FILE) -> ModRules:
 
     def parse_prefer(index: int, value: Any) -> PreferRule:
         context = f"{path}: prefer rule #{index}"
-        if not isinstance(value, dict) or set(value) - {"winner", "losers", "reason", "enabled"}:
-            raise ModRulesError(f"{context}: expected winner, losers, optional reason/enabled")
+        if not isinstance(value, dict) or set(value) - {"winner", "losers", "reason", "enabled", "removed_fallback"}:
+            raise ModRulesError(f"{context}: expected winner, losers, optional reason/enabled/removed_fallback")
         winner = _rule_mod_id(value.get("winner"), context + " winner")
         losers_raw = value.get("losers")
         if not isinstance(losers_raw, list) or not losers_raw:
@@ -330,8 +332,15 @@ def load_mod_rules(path: Path = RULES_FILE) -> ModRules:
         duplicate_losers = sorted({item for item in losers if losers.count(item) > 1})
         if duplicate_losers:
             raise ModRulesError(f"{context}: duplicate losers: {', '.join(duplicate_losers)}")
+        fallback = value.get("removed_fallback")
+        if fallback is not None:
+            fallback = _rule_mod_id(fallback, context + " removed_fallback")
+            if fallback == winner:
+                raise ModRulesError(f'{context}: removed_fallback "{fallback}" is the winner')
+            if fallback not in losers:
+                raise ModRulesError(f'{context}: removed_fallback "{fallback}" must appear in losers')
         return PreferRule(winner, losers, _optional_rule_text(value.get("reason"), context),
-                          _rule_enabled(value.get("enabled"), context))
+                          _rule_enabled(value.get("enabled"), context), fallback)
 
     prefer_raw = mods.get("prefer", [])
     if not isinstance(prefer_raw, list):
@@ -342,6 +351,10 @@ def load_mod_rules(path: Path = RULES_FILE) -> ModRules:
     if duplicate_prefer:
         winner, losers = duplicate_prefer[0]
         raise ModRulesError(f"{path}: duplicate prefer rule: {winner} -> {', '.join(losers)}")
+    fallback_winners = [rule.winner for rule in prefer if rule.removed_fallback]
+    duplicate_fallback_winners = sorted({winner for winner in fallback_winners if fallback_winners.count(winner) > 1})
+    if duplicate_fallback_winners:
+        raise ModRulesError(f"{path}: multiple removed_fallback declarations for: {', '.join(duplicate_fallback_winners)}")
     cycle = _find_prefer_cycle(prefer)
     if cycle:
         raise ModRulesError(f"{path}: prefer cycle: {' -> '.join(cycle)}")
@@ -370,12 +383,14 @@ def load_mod_rules(path: Path = RULES_FILE) -> ModRules:
 
 def resolve_mod_rules(
     candidates: list[str], rules: ModRules, manual_blacklist: set[str] | None = None,
-    forced: list[str] | None = None,
+    forced: list[str] | None = None, previous_active: set[str] | None = None,
 ) -> tuple[list[str], list[dict[str, Any]], list[dict[str, Any]]]:
     """Resolve project rules in file order; forced IDs are appended afterward."""
     active = list(dict.fromkeys(candidates))
+    available = set(active)
     decisions: list[dict[str, Any]] = []
     manual_blacklist = manual_blacklist or set()
+    previous_active = previous_active or set()
     for mod_id in list(active):
         if mod_id in rules.always_exclude:
             active.remove(mod_id)
@@ -389,6 +404,29 @@ def resolve_mod_rules(
                 if loser in active:
                     active.remove(loser)
                     decisions.append({"mod_id": loser, "status": "excluded", "reason": "superseded", "superseded_by": rule.winner, "rule_reason": rule.reason})
+    # A Removed placeholder is only meaningful after a successfully-started
+    # configuration used its winner. It is derived state, never an .env edit.
+    excluded_by_reason = {item["mod_id"]: item["reason"] for item in decisions}
+    for rule in rules.prefer:
+        fallback = rule.removed_fallback
+        if not rule.enabled or not fallback or rule.winner not in previous_active or rule.winner in active:
+            continue
+        details = {
+            "mod_id": fallback,
+            "original_mod": rule.winner,
+            "rule_reason": rule.reason,
+        }
+        if fallback in manual_blacklist:
+            decisions.append({**details, "status": "fallback_blocked_by_admin", "reason": "manual blacklist"})
+        elif fallback not in available:
+            decisions.append({**details, "status": "fallback_unavailable", "reason": "not available from resolved Workshop items"})
+        elif fallback in active:
+            decisions.append({**details, "status": "auto_removed_fallback", "reason": "previously active winner is now disabled"})
+        elif fallback in excluded_by_reason:
+            decisions.append({**details, "status": "fallback_unavailable", "reason": f"excluded by {excluded_by_reason[fallback]}"})
+        else:
+            active.append(fallback)
+            decisions.append({**details, "status": "auto_removed_fallback", "reason": "previously active winner is now disabled"})
     for mod_id in forced or []:
         if mod_id not in active:
             active.append(mod_id)
@@ -1382,6 +1420,8 @@ def print_rules(rules: ModRules) -> None:
     for rule in rules.prefer:
         state = " (disabled)" if not rule.enabled else ""
         print(f"{rule.winner}{state}\n  -> suppresses {', '.join(rule.losers)}")
+        if rule.removed_fallback:
+            print(f"  -> removed fallback: {rule.removed_fallback}")
         if rule.reason:
             print(f"  reason: {rule.reason}")
     print("\nCONFLICT")
@@ -1807,15 +1847,26 @@ def main() -> int:
             "Muldraugh, KY"
         )
 
+    previous_active_mods = read_last_active_mods(
+        state_file(SCRIPT_DIR),
+        lambda message: print(f"WARNING: [PZ-MODS] {message}", file=sys.stderr),
+    )
     collection_mod_ids = list(mod_ids)
     mod_ids, mod_rule_decisions, conflicts = resolve_mod_rules(
         mod_ids,
         rules,
         ADMIN_MOD_BLACKLIST,
         ADMIN_MOD_FORCED,
+        set(previous_active_mods),
     )
     for decision in mod_rule_decisions:
-        if decision["reason"] == "superseded":
+        if decision["status"] == "auto_removed_fallback":
+            print(f"[PZ-MODS] Activating {decision['mod_id']}: {decision['original_mod']} was active previously and is now disabled")
+        elif decision["status"] == "fallback_blocked_by_admin":
+            print(f"[PZ-MODS] Removed fallback {decision['mod_id']} blocked by administrator blacklist", file=sys.stderr)
+        elif decision["status"] == "fallback_unavailable":
+            print(f"[PZ-MODS] Removed fallback required but unavailable: {decision['mod_id']}", file=sys.stderr)
+        elif decision["reason"] == "superseded":
             print(f"[PZ-MODS] Excluding {decision['mod_id']}: superseded by {decision['superseded_by']}")
         elif decision["reason"] == "manual blacklist":
             print(f"[PZ-MODS] Manual blacklist removed {decision['mod_id']}")
@@ -1889,6 +1940,7 @@ def main() -> int:
         "workshop_ids": workshop_ids,
         "mod_ids": mod_ids,
         "mod_load_order_adjustments": load_order_adjustments,
+        "previous_successful_active_mods": previous_active_mods,
         "mod_rule_decisions": mod_rule_decisions,
         "workshop_decisions": workshop_decisions,
         "conflicts": conflicts,
@@ -2069,7 +2121,38 @@ def main() -> int:
                 + (f"\n  rule: {decision['rule_reason']}" if decision.get("rule_reason") else "")
             )
             for decision in mod_rule_decisions
-            if decision["reason"] != "manual blacklist"
+            if decision["status"] == "excluded" and decision["reason"] != "manual blacklist"
+        ],
+    )
+
+    section(
+        "REMOVED FALLBACKS",
+        [
+            f"{decision['mod_id']}\n  automatically activated\n  original mod: {decision['original_mod']}\n"
+            f"  reason: {decision['reason']}"
+            + (f"\n  rule: {decision['rule_reason']}" if decision.get("rule_reason") else "")
+            for decision in mod_rule_decisions
+            if decision["status"] == "auto_removed_fallback"
+        ],
+    )
+
+    section(
+        "REMOVED FALLBACK WARNINGS",
+        [
+            f"{decision['original_mod']}\n  previously active; now disabled\n  known fallback: {decision['mod_id']}\n"
+            "  fallback not activated because it is explicitly blacklisted"
+            for decision in mod_rule_decisions
+            if decision["status"] == "fallback_blocked_by_admin"
+        ],
+    )
+
+    section(
+        "REMOVED FALLBACK ERRORS",
+        [
+            f"{decision['original_mod']}\n  previously active; now disabled\n  required fallback: {decision['mod_id']}\n"
+            f"  fallback {decision['reason']}"
+            for decision in mod_rule_decisions
+            if decision["status"] == "fallback_unavailable"
         ],
     )
 

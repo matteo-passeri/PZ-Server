@@ -11,6 +11,7 @@ PATH_MODULES = (
     "audit-server-log.py",
     "check-mod-updates.py",
     "generate-mod-list.py",
+    "mod_active_state.py",
     "run-startup-audit.py",
     "verify-vehicle-compat.py",
     "fix-scripts/00-linux-animset-xml-case.py",

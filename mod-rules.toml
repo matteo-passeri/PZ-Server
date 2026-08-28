@@ -27,12 +27,14 @@ reason = "The normal and Removed Waterpipes variants are mutually exclusive."
 [[mods.prefer]]
 winner = "FunctionalGutters"
 losers = ["FunctionalGuttersRemoved"]
-reason = "The normal and Removed Functional Gutters variants are mutually exclusive."
+removed_fallback = "FunctionalGuttersRemoved"
+reason = "Keep placeholder definitions required by existing saves after removing FunctionalGutters."
 
 [[mods.prefer]]
 winner = "WorkingGutters"
 losers = ["WorkingGuttersRemoved"]
-reason = "The normal and Removed Working Gutters variants are mutually exclusive."
+removed_fallback = "WorkingGuttersRemoved"
+reason = "Keep placeholder definitions required by existing saves after removing WorkingGutters."
 
 # Add [[mods.conflict]] rules for incompatibilities without a universal winner.
 

@@ -8,6 +8,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from mod_active_state import state_file, write_last_active_mods
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ENV_FILE = SCRIPT_DIR / ".env"
@@ -117,6 +119,13 @@ def run_reporter(log_path):
     return result.returncode == 0
 
 
+def record_successful_mod_state(env, root=SCRIPT_DIR):
+    """Persist only the generated Mods= list which reached SERVER STARTED."""
+    mod_ids = [value.strip() for value in env.get("PZ_MOD_NAMES", "").split(";") if value.strip()]
+    write_last_active_mods(state_file(root), mod_ids)
+    log(f"Recorded {len(mod_ids)} active Mod IDs after SERVER STARTED.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run one host-side PZ startup audit.")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
@@ -141,6 +150,7 @@ def main():
     if log_path is None:
         log("Startup audit timed out waiting for SERVER STARTED.")
         return 1
+    record_successful_mod_state(env)
     if not run_reporter(log_path):
         log("Startup audit reporter failed; the Project Zomboid service is unaffected.")
         return 1

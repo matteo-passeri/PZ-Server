@@ -102,3 +102,66 @@ PZ_MOD_FORCED_WORKSHOP=123
     stderr = capsys.readouterr().err
     assert "both blacklists and forces Mod IDs: SomeMod" in stderr
     assert "both blacklists and forces Workshop IDs: 123" in stderr
+
+
+def test_removed_fallback_requires_previous_successful_winner():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    preference = generator.PreferRule(
+        "FunctionalGutters", ("FunctionalGuttersRemoved",),
+        "save compatibility", removed_fallback="FunctionalGuttersRemoved",
+    )
+    config = rules(generator, prefer=(preference,))
+    active, decisions, _ = generator.resolve_mod_rules(
+        ["FunctionalGutters", "FunctionalGuttersRemoved"], config,
+        {"FunctionalGutters"}, previous_active={"FunctionalGutters"},
+    )
+    assert active == ["FunctionalGuttersRemoved"]
+    assert decisions[-1]["status"] == "auto_removed_fallback"
+    # Existing prefer semantics leave an independently discovered loser alone
+    # when the winner is blacklisted, but no automatic fallback is claimed.
+    active, decisions, _ = generator.resolve_mod_rules(
+        ["FunctionalGutters", "FunctionalGuttersRemoved"], config,
+        {"FunctionalGutters"}, previous_active=set(),
+    )
+    assert active == ["FunctionalGuttersRemoved"]
+    assert not any(item["status"] == "auto_removed_fallback" for item in decisions)
+
+
+def test_removed_fallback_blocked_and_unavailable_are_diagnostic():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    preference = generator.PreferRule("A", ("ARemoved",), removed_fallback="ARemoved")
+    config = rules(generator, prefer=(preference,))
+    active, decisions, _ = generator.resolve_mod_rules(
+        ["A", "ARemoved"], config, {"A", "ARemoved"}, previous_active={"A"},
+    )
+    assert active == []
+    assert decisions[-1]["status"] == "fallback_blocked_by_admin"
+    active, decisions, _ = generator.resolve_mod_rules(
+        ["A"], config, {"A"}, previous_active={"A"},
+    )
+    assert active == []
+    assert decisions[-1]["status"] == "fallback_unavailable"
+
+
+def test_disabled_prefer_has_no_fallback_effect_and_forced_behavior_is_unchanged():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    preference = generator.PreferRule("A", ("ARemoved",), enabled=False, removed_fallback="ARemoved")
+    active, decisions, _ = generator.resolve_mod_rules(
+        ["A", "ARemoved"], rules(generator, prefer=(preference,)), {"A"},
+        forced=["Forced"], previous_active={"A"},
+    )
+    assert active == ["ARemoved", "Forced"]
+    assert decisions[-1]["reason"] == "manual forced"
+
+
+@pytest.mark.parametrize("rule_text, message", [
+    ("removed_fallback = ''", "removed_fallback"),
+    ("removed_fallback = 'A'", "is the winner"),
+    ("removed_fallback = 'C'", "must appear in losers"),
+])
+def test_removed_fallback_validation(tmp_path, rule_text, message):
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    path = tmp_path / "rules.toml"
+    path.write_text(f"[mods]\n[[mods.prefer]]\nwinner = 'A'\nlosers = ['B']\n{rule_text}\n", encoding="utf-8")
+    with pytest.raises(generator.ModRulesError, match=message):
+        generator.load_mod_rules(path)

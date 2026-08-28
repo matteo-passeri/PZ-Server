@@ -9,6 +9,8 @@ __pycache__/
 .pz-mod-check-state.json.tmp
 .pz-local-fixes-state.json
 .pz-local-fixes-state.json.tmp
+.pz-last-successful-mods.json
+.pz-last-successful-mods.json.tmp
 *.bak
 *.backup
 *.before-*

@@ -3,6 +3,7 @@
 import argparse
 import re
 import sys
+import tomllib
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,6 +12,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ENV_FILE = SCRIPT_DIR / ".env"
+RULES_FILE = SCRIPT_DIR / "mod-rules.toml"
 REPORTS_DIR = SCRIPT_DIR / "reports"
 STARTED_MARKER = "*** SERVER STARTED ****"
 TIMESTAMP_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}\b")
@@ -63,6 +65,14 @@ LOW_PATTERNS = (
     "missing thumpsound", "sanitizing container names",
     "sanitizing container name", "cosmetic warning",
 )
+WORLD_DICTIONARY_PATTERNS = (
+    "worlddictionaryexception", "worlddictionary error",
+    "cannot load world due to worlddictionary", "missing dictionary script on client",
+)
+WORLD_DICTIONARY_MOD_ID_RE = re.compile(
+    r"\bmodid\s*=\s*[\"']?(?P<mod_id>[A-Za-z0-9_.-]+)", re.I,
+)
+WORLD_DICTIONARY_REMOVED_RE = re.compile(r"\bremoved\s*=\s*true\b", re.I)
 
 
 @dataclass
@@ -77,6 +87,50 @@ class Event:
 class OptionalProbeAnalysis:
     details: list[tuple[str, str, str]]
     suppressed_line_indexes: set[int]
+
+
+@dataclass(frozen=True)
+class WorldDictionaryRemovedMod:
+    mod_id: str
+    line_number: int
+
+
+def known_removed_fallbacks(path: Path = RULES_FILE) -> dict[str, str]:
+    """Read declared fallback relationships for diagnostics, never by naming guess."""
+    try:
+        with path.open("rb") as handle:
+            prefer_rules = tomllib.load(handle).get("mods", {}).get("prefer", [])
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    if not isinstance(prefer_rules, list):
+        return {}
+    return {
+        rule["winner"]: rule["removed_fallback"]
+        for rule in prefer_rules
+        if isinstance(rule, dict)
+        and rule.get("enabled", True) is True
+        and isinstance(rule.get("winner"), str)
+        and isinstance(rule.get("removed_fallback"), str)
+    }
+
+
+def find_world_dictionary_removed_mods(
+    lines: list[str], start: int, end: int,
+) -> list[WorldDictionaryRemovedMod]:
+    """Extract explicit `removed=true` Mod IDs near WorldDictionary failures."""
+    results: list[WorldDictionaryRemovedMod] = []
+    seen: set[str] = set()
+    for index in range(start, end):
+        if not any(pattern in lines[index].casefold() for pattern in WORLD_DICTIONARY_PATTERNS):
+            continue
+        block = "\n".join(lines[index:min(end, index + 16)])
+        if not WORLD_DICTIONARY_REMOVED_RE.search(block):
+            continue
+        match = WORLD_DICTIONARY_MOD_ID_RE.search(block)
+        if match and match.group("mod_id") not in seen:
+            seen.add(match.group("mod_id"))
+            results.append(WorldDictionaryRemovedMod(match.group("mod_id"), index + 1))
+    return results
 
 
 def optional_animation_probe_details(line: str) -> tuple[str, str, str] | None:
@@ -170,6 +224,8 @@ def classify(line: str) -> tuple[str, str] | None:
         LOG_PROBLEM_LEVEL_RE.search(line)
         or (JAVA_EXCEPTION_RE.search(line) and not is_java_stack_continuation(line))
     )
+    if any(pattern in lowered for pattern in WORLD_DICTIONARY_PATTERNS):
+        return "WORLD DICTIONARY / REMOVED MOD", "important"
     if any(pattern in lowered for pattern in CRITICAL_PATTERNS) or lua_nil:
         return "CRITICAL / HIGH", "critical"
     if any(pattern in lowered for pattern in DEPENDENCY_PATTERNS):
@@ -265,6 +321,7 @@ def format_report(
     phase_start: int,
     phase_end: int,
     marker_index: int | None,
+    removed_fallbacks: dict[str, str] | None = None,
 ) -> str:
     all_counts = counts(lines)
     phase_lines = lines[phase_start:phase_end]
@@ -281,6 +338,8 @@ def format_report(
         optional_probe_analysis.suppressed_line_indexes,
     )
     probe_details = optional_probe_analysis.details
+    world_dictionary_mods = find_world_dictionary_removed_mods(lines, phase_start, phase_end)
+    removed_fallbacks = removed_fallbacks or {}
     header = [
         "Project Zomboid Server Log Audit",
         f"Phase: {phase}",
@@ -297,7 +356,7 @@ def format_report(
         header.extend(["INCOMPLETE STARTUP: SERVER STARTED was not reached.", ""])
 
     grouped = {category: [] for category in (
-        "CRITICAL / HIGH", "DEPENDENCY / CONFIG", "ANIMATION / ASSET",
+        "CRITICAL / HIGH", "WORLD DICTIONARY / REMOVED MOD", "DEPENDENCY / CONFIG", "ANIMATION / ASSET",
         "LOW / NOISE", "OTHER / WARNING",
     )}
     for event in events:
@@ -322,7 +381,22 @@ def format_report(
         ])
     body.append("")
 
-    for category in ("CRITICAL / HIGH", "DEPENDENCY / CONFIG", "ANIMATION / ASSET", "LOW / NOISE", "OTHER / WARNING"):
+    body.append(f"WORLD DICTIONARY REMOVED MOD ({len(world_dictionary_mods)})")
+    if not world_dictionary_mods:
+        body.append("None.")
+    for finding in world_dictionary_mods:
+        body.extend([
+            f"{finding.mod_id} (near line {finding.line_number})",
+            "  WorldDictionary still references definitions from this removed mod.",
+        ])
+        fallback = removed_fallbacks.get(finding.mod_id)
+        if fallback:
+            body.append(f"  Known fallback: {fallback}")
+        else:
+            body.append("  No declared fallback; manual investigation required.")
+    body.append("")
+
+    for category in ("CRITICAL / HIGH", "WORLD DICTIONARY / REMOVED MOD", "DEPENDENCY / CONFIG", "ANIMATION / ASSET", "LOW / NOISE", "OTHER / WARNING"):
         category_events = grouped[category]
         body.append(f"{category} ({len(category_events)})")
         if not category_events:
@@ -357,16 +431,17 @@ def generate_reports(source: Path, requested: str = "all") -> list[Path]:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     stem = report_stem(source)
     output = []
+    removed_fallbacks = known_removed_fallbacks()
 
     if requested in ("all", "startup") or marker_index is None:
         startup_end = marker_index + 1 if marker_index is not None else len(lines)
         startup = REPORTS_DIR / f"{stem}-startup-errors.txt"
-        startup.write_text(format_report(source, lines, "startup", 0, startup_end, marker_index), encoding="utf-8")
+        startup.write_text(format_report(source, lines, "startup", 0, startup_end, marker_index, removed_fallbacks), encoding="utf-8")
         output.append(startup)
 
     if marker_index is not None and requested in ("all", "runtime"):
         runtime = REPORTS_DIR / f"{stem}-runtime-errors.txt"
-        runtime.write_text(format_report(source, lines, "runtime", marker_index, len(lines), marker_index), encoding="utf-8")
+        runtime.write_text(format_report(source, lines, "runtime", marker_index, len(lines), marker_index, removed_fallbacks), encoding="utf-8")
         output.append(runtime)
 
     return output

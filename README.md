@@ -110,6 +110,42 @@ losers = ["WorkingGuttersRemoved"]
 reason = "These variants are mutually exclusive."
 ```
 
+Some mods provide a `Removed` placeholder which existing saves must keep after
+the original mod is intentionally disabled. Declare it on the same `prefer`
+rule; it is not a generic replacement for fresh worlds:
+
+```toml
+[[mods.prefer]]
+winner = "FunctionalGutters"
+losers = ["FunctionalGuttersRemoved"]
+removed_fallback = "FunctionalGuttersRemoved"
+reason = "Keep placeholder definitions for existing saves after removing the original mod."
+```
+
+After the server reaches `SERVER STARTED`, the host-side startup audit records
+the resolved `Mods=` IDs in the ignored root-level
+`.pz-last-successful-mods.json` state file. On a later generation, if that
+successful state contained `FunctionalGutters` and an administrator sets
+`PZ_MOD_BLACKLIST_MODS=FunctionalGutters`, the resolver activates
+`FunctionalGuttersRemoved` when it is available from the resolved Workshop
+items. It never rewrites `.env`: the fallback is derived state, while `.env`
+continues to express administrator intent.
+
+With `PZ_MOD_BLACKLIST_MODS=FunctionalGutters;FunctionalGuttersRemoved`,
+neither is enabled. The administrator blacklist wins and the generator reports
+the blocked fallback. If the placeholder cannot be resolved from current
+Workshop content, it reports an unresolved fallback and does not invent a
+Workshop ID. On a first run, or when the original mod was never in successful
+state, no fallback is automatically added.
+
+Startup and runtime log audits separately identify WorldDictionary removed-mod
+diagnostics, including `WorldDictionaryException`, missing dictionary scripts,
+world-load dictionary errors, and nearby `removed = true` / `modID = ...`
+details. When a Mod ID has a declared fallback, the audit reports it; otherwise
+it requests manual investigation. Client-side WorldDictionary failures may not
+always appear in the dedicated-server log, so successful-state transition is
+the primary compatibility mechanism.
+
 For an incompatibility without a universal winner, report it rather than
 silently choosing one:
 
@@ -129,8 +165,14 @@ python3 generate-mod-list.py --list-rules
 Resolution is deterministic: collections are read first; project
 `always_exclude` and administrator blacklists remove candidates; enabled
 `prefer` rules run in file order against that evolving active set; administrator
+Removed fallbacks are considered from previous successful state; administrator
 forced additions are appended; conflicts are reported; then the existing
 load-order rules run. A preference cycle is rejected during validation.
+
+Forced Mod IDs retain their existing explicit-administrator semantics: they are
+appended after project exclusions and preferences, so a forced ID can override
+an exclusion. Conflicting blacklist/forced entries are warned about and forced
+inclusion wins.
 
 For example, a collection containing `WorkingGutters` and
 `WorkingGuttersRemoved` keeps `WorkingGutters`. With
