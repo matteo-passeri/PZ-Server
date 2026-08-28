@@ -207,6 +207,32 @@ identify these diagnostics and their `mod.info` source path. Administrator
 blacklists/forced IDs and `mod-rules.toml` resolution still determine which Mod
 IDs are active before this metadata is evaluated.
 
+### Workshop Mod ID selection
+
+Workshop discovery, Mod ID selection, and Mod ID dependency/load ordering are
+separate steps. A Workshop item may expose several IDs without all of them
+being valid to activate together. The small curated `MOD_SELECTION_RULES`
+mapping in `generate-mod-list.py` is reserved for verified item-specific
+defaults, optional add-ons, mutually exclusive variants, conditional variants,
+and known Removed replacements. It is deliberately separate from the curated
+load-order lists and from `mod-rules.toml` compatibility rules.
+
+Administrator choices still take precedence: `PZ_MOD_ID_OVERRIDES` and
+`PZ_MOD_FORCED_MODS` can select a valid variant or optional add-on, while a
+blacklist prevents a curated or derived default from being re-added. Requesting
+two variants in the same curated exclusive group is rejected instead of picking
+one arbitrarily. Without a matching selection rule, existing unresolved
+multi-Mod-ID behaviour is retained.
+
+Within one Workshop item only, an exact case-sensitive `Foo` / `FooRemoved`
+pair is automatically recognized as mutually exclusive. Normal automatic
+selection retains `Foo` and excludes `FooRemoved`; names such as
+`Foo_Removed`, or IDs in different Workshop items, are not inferred. This name
+match does not make `FooRemoved` a historical-save replacement. Activating a
+Removed placeholder after a previous successful `Foo` configuration requires
+an explicit curated `removed_replacements` entry and only happens when that
+base Mod ID is no longer selected.
+
 For example, a collection containing `WorkingGutters` and
 `WorkingGuttersRemoved` keeps `WorkingGutters`. With
 `PZ_MOD_BLACKLIST_MODS=WorkingGutters`, the winner is removed before preference

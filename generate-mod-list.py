@@ -154,6 +154,17 @@ class ModLoadOrderError(RuntimeError):
     """Raised when active hard Mod ID ordering rules are contradictory."""
 
 
+class ModSelectionError(RuntimeError):
+    """Raised when curated Workshop Mod-ID selection cannot be resolved safely."""
+
+
+# Curated multi-Mod-ID selection policy. Keep this separate from load order:
+# selection chooses active IDs; Phase 1 orders those active IDs afterward.
+# Add only verified Workshop rules here. Exact X/XRemoved pairs are inferred
+# safely at runtime and therefore do not require an entry.
+MOD_SELECTION_RULES: dict[str, dict[str, Any]] = {}
+
+
 def normalize_mod_info_order_value(value: str) -> str:
     """Remove one accidental leading backslash from mod.info order metadata."""
     return value[1:] if value.startswith("\\") else value
@@ -463,12 +474,14 @@ def validate_effective_prefer_rules(rules: tuple[PreferRule, ...]) -> None:
 def resolve_mod_rules(
     candidates: list[str], rules: ModRules, manual_blacklist: set[str] | None = None,
     forced: list[str] | None = None, previous_active: set[str] | None = None,
+    available_mod_ids: set[str] | None = None,
 ) -> tuple[list[str], list[dict[str, Any]], list[dict[str, Any]]]:
     """Resolve project rules in file order; forced IDs are appended afterward."""
     active = list(dict.fromkeys(candidates))
     # Physical Mod-ID availability comes from resolved Workshop content before
-    # exclusions/preference resolution. It is intentionally not the active set.
-    available_mod_ids = set(active)
+    # exclusions/preference resolution. Selection may intentionally omit an
+    # available Removed placeholder, so it must not be conflated with active.
+    available_mod_ids = available_mod_ids if available_mod_ids is not None else set(active)
     decisions: list[dict[str, Any]] = []
     manual_blacklist = manual_blacklist or set()
     previous_active = previous_active or set()
@@ -499,6 +512,8 @@ def resolve_mod_rules(
         }
         if fallback in manual_blacklist:
             decisions.append({**details, "status": "fallback_blocked_by_admin", "reason": "manual blacklist"})
+        elif fallback in rules.always_exclude:
+            decisions.append({**details, "status": "fallback_unavailable", "reason": "excluded by project always_exclude"})
         elif fallback not in available_mod_ids:
             decisions.append({**details, "status": "fallback_unavailable", "reason": "not available from resolved Workshop items"})
         elif fallback in active:
@@ -1453,6 +1468,196 @@ def select_workshop_mod_ids(
     return discovered, []
 
 
+def _selection_ids(value: Any, context: str) -> list[str]:
+    if not isinstance(value, list) or not value or not all(isinstance(item, str) and item for item in value):
+        raise ModSelectionError(f"{context} must be a non-empty Mod ID list")
+    if len(value) != len(set(value)):
+        raise ModSelectionError(f"{context} contains duplicate Mod IDs")
+    return list(value)
+
+
+def validate_mod_selection_rules(rules: dict[str, dict[str, Any]] = MOD_SELECTION_RULES) -> None:
+    """Validate the small curated selection model without Workshop access."""
+    if not isinstance(rules, dict):
+        raise ModSelectionError("MOD_SELECTION_RULES must be a mapping")
+    for workshop_id, rule in rules.items():
+        context = f"MOD_SELECTION_RULES[{workshop_id!r}]"
+        if not isinstance(workshop_id, str) or not workshop_id.isdigit() or not isinstance(rule, dict):
+            raise ModSelectionError(f"{context} requires a numeric Workshop ID and mapping")
+        allowed = {"mod_ids", "default", "optional", "exclusive_groups", "removed_replacements", "conditions"}
+        if set(rule) - allowed:
+            raise ModSelectionError(f"{context} contains unsupported keys")
+        mod_ids = _selection_ids(rule.get("mod_ids"), context + ".mod_ids")
+        declared = set(mod_ids)
+        for key in ("default", "optional"):
+            if key in rule:
+                values = _selection_ids(rule[key], context + f".{key}")
+                if not set(values) <= declared:
+                    raise ModSelectionError(f"{context}.{key} contains undeclared Mod IDs")
+        if set(rule.get("default", [])) & set(rule.get("optional", [])):
+            raise ModSelectionError(f"{context} marks a default Mod ID as optional")
+        for index, group in enumerate(rule.get("exclusive_groups", []), 1):
+            values = _selection_ids(group, context + f".exclusive_groups[{index}]")
+            if not set(values) <= declared:
+                raise ModSelectionError(f"{context}.exclusive_groups[{index}] contains undeclared Mod IDs")
+        replacements = rule.get("removed_replacements", {})
+        if not isinstance(replacements, dict):
+            raise ModSelectionError(f"{context}.removed_replacements must be a mapping")
+        for base, replacement in replacements.items():
+            if not isinstance(base, str) or not isinstance(replacement, str) or not base or not replacement or base == replacement:
+                raise ModSelectionError(f"{context}.removed_replacements contains an invalid replacement")
+            if base not in declared or replacement not in declared:
+                raise ModSelectionError(f"{context}.removed_replacements contains undeclared Mod IDs")
+        conditions = rule.get("conditions", [])
+        if not isinstance(conditions, list):
+            raise ModSelectionError(f"{context}.conditions must be a list")
+        for index, condition in enumerate(conditions, 1):
+            if not isinstance(condition, dict) or set(condition) - {"if_active", "select", "deselect"}:
+                raise ModSelectionError(f"{context}.conditions[{index}] is malformed")
+            required = _selection_ids(condition.get("if_active"), context + f".conditions[{index}].if_active")
+            select = _selection_ids(condition.get("select"), context + f".conditions[{index}].select")
+            deselect = _selection_ids(condition.get("deselect"), context + f".conditions[{index}].deselect")
+            if set(select) & set(deselect):
+                raise ModSelectionError(f"{context}.conditions[{index}] selects and deselects the same Mod ID")
+            if not set(select + deselect) <= declared:
+                raise ModSelectionError(f"{context}.conditions[{index}] contains undeclared Mod IDs")
+
+
+def discover_removed_pairs(workshop_id: str, mod_ids: list[str]) -> list[dict[str, str]]:
+    """Return only exact, case-sensitive X/XRemoved pairs from one Workshop."""
+    present = set(mod_ids)
+    return [
+        {"workshop_id": workshop_id, "base_mod_id": mod_id[:-7], "removed_mod_id": mod_id}
+        for mod_id in mod_ids
+        if mod_id.endswith("Removed") and mod_id[:-7] and mod_id[:-7] in present
+    ]
+
+
+def resolve_mod_selection(
+    records: list[dict[str, Any]], rules: dict[str, dict[str, Any]],
+    admin_blacklist: set[str], admin_forced: list[str], previous_active: set[str],
+) -> tuple[list[str], list[dict[str, Any]], list[dict[str, str]], list[dict[str, Any]]]:
+    """Select safe Workshop Mod IDs before compatibility resolution and sorting."""
+    validate_mod_selection_rules(rules)
+    forced = set(admin_forced)
+    # Conditions inspect the configuration selected so far, including curated
+    # defaults from otherwise unresolved multi-Mod Workshop items. This keeps
+    # condition evaluation independent of collection-record iteration order.
+    baseline = {
+        mod_id for record in records for mod_id in record.get("mod_ids", [])
+    } | forced
+    for record in records:
+        rule = rules.get(record["workshop_id"])
+        if not rule:
+            continue
+        discovered = set(record.get("discovered_mod_ids", []))
+        baseline.update(
+            mod_id for mod_id in rule.get("default", [])
+            if mod_id in discovered and mod_id not in admin_blacklist
+        )
+        baseline.update(
+            mod_id for mod_id in record.get("explicit_mod_ids", [])
+            if mod_id in discovered and mod_id not in admin_blacklist
+        )
+    selected: list[str] = []
+    decisions: list[dict[str, Any]] = []
+    auto_pairs: list[dict[str, str]] = []
+    replacements: list[dict[str, Any]] = []
+
+    for record in records:
+        workshop_id = record["workshop_id"]
+        discovered = list(dict.fromkeys(record.get("discovered_mod_ids", [])))
+        current = list(record.get("mod_ids", []))
+        rule = rules.get(workshop_id)
+        pairs = discover_removed_pairs(workshop_id, discovered)
+        auto_pairs.extend(pairs)
+        removed_ids = {pair["removed_mod_id"] for pair in pairs}
+        # Per-Workshop overrides and globally forced Mod IDs are both explicit
+        # administrator choices. They take precedence over curated defaults.
+        explicitly_requested = set(record.get("explicit_mod_ids", [])) | forced
+        explicit = [mod_id for mod_id in discovered if mod_id in explicitly_requested]
+        if rule:
+            declared = set(rule["mod_ids"])
+            eligible = [mod_id for mod_id in discovered if mod_id in declared and mod_id not in admin_blacklist]
+            chosen = [mod_id for mod_id in rule.get("default", []) if mod_id in eligible]
+            reason = "curated_default"
+            for condition in rule.get("conditions", []):
+                if set(condition["if_active"]) <= baseline:
+                    chosen = [mod_id for mod_id in chosen if mod_id not in condition["deselect"]]
+                    chosen.extend(mod_id for mod_id in condition["select"] if mod_id in eligible and mod_id not in chosen)
+                    reason = "curated_condition"
+            for group in rule.get("exclusive_groups", []):
+                group_selected = [mod_id for mod_id in chosen if mod_id in group]
+                forced_group = [mod_id for mod_id in explicit if mod_id in group]
+                if len(forced_group) > 1:
+                    raise ModSelectionError(
+                        f"Conflicting Mod ID variants requested for Workshop {workshop_id}: "
+                        + ", ".join(forced_group)
+                    )
+                if forced_group:
+                    chosen = [mod_id for mod_id in chosen if mod_id not in group] + forced_group
+                elif len(group_selected) > 1:
+                    raise ModSelectionError(f"Curated selection chooses multiple variants for Workshop {workshop_id}: {', '.join(group_selected)}")
+            # Explicit optional add-ons supplement the default unless they
+            # replace a member of an exclusive group above.
+            for mod_id in explicit:
+                if mod_id in declared and mod_id not in admin_blacklist and mod_id not in chosen:
+                    chosen.append(mod_id)
+                    reason = "administrator_forced"
+            # Exact same-Workshop X/XRemoved pairs remain mutually exclusive
+            # even when a curated rule controls the rest of the item.
+            for pair in pairs:
+                base = pair["base_mod_id"]
+                removed = pair["removed_mod_id"]
+                pair_requested = [mod_id for mod_id in explicit if mod_id in {base, removed}]
+                if len(pair_requested) > 1:
+                    raise ModSelectionError(
+                        f"Conflicting Mod ID variants requested for Workshop {workshop_id}: "
+                        + ", ".join(pair_requested)
+                    )
+                if base in chosen and removed in chosen:
+                    retained = pair_requested[0] if pair_requested else base
+                    chosen = [mod_id for mod_id in chosen if mod_id not in {base, removed}]
+                    chosen.append(retained)
+            decisions.append({"workshop_id": workshop_id, "selected": chosen, "rejected": [m for m in discovered if m not in chosen], "reason": reason})
+        elif pairs:
+            bases = {pair["base_mod_id"] for pair in pairs}
+            safe = [mod_id for mod_id in discovered if mod_id not in removed_ids]
+            chosen = [mod_id for mod_id in explicit if mod_id not in admin_blacklist]
+            for pair in pairs:
+                pair_requested = [
+                    mod_id for mod_id in explicit
+                    if mod_id in {pair["base_mod_id"], pair["removed_mod_id"]}
+                ]
+                if len(pair_requested) > 1:
+                    raise ModSelectionError(
+                        f"Conflicting Mod ID variants requested for Workshop {workshop_id}: "
+                        + ", ".join(pair_requested)
+                    )
+            if not chosen and safe and all(mod_id in bases for mod_id in safe) and all(mod_id not in admin_blacklist for mod_id in safe):
+                chosen = safe
+                decisions.append({"workshop_id": workshop_id, "selected": chosen, "rejected": list(removed_ids), "reason": "auto_removed_pair"})
+            elif current:
+                chosen = [mod_id for mod_id in current if mod_id not in removed_ids]
+            else:
+                chosen = []
+        else:
+            chosen = current
+
+        for mod_id in chosen:
+            if mod_id not in selected:
+                selected.append(mod_id)
+
+        if rule:
+            for base, replacement in rule.get("removed_replacements", {}).items():
+                if base in previous_active and base not in selected and replacement in discovered and replacement not in admin_blacklist:
+                    if replacement not in selected:
+                        selected.append(replacement)
+                    replacements.append({"workshop_id": workshop_id, "base_mod_id": base, "replacement_mod_id": replacement, "reason": "previously_active_then_removed", "source": "curated_rule"})
+
+    return selected, decisions, auto_pairs, replacements
+
+
 def suspicious_build(
     title: str,
     description: str,
@@ -1605,6 +1810,7 @@ def main() -> int:
     if not rules_path.is_absolute():
         rules_path = (Path.cwd() / rules_path).resolve()
     rules = load_mod_rules(rules_path)
+    validate_mod_selection_rules()
     if args.validate_rules:
         print(f"Rules OK\nalways_exclude: {len(rules.always_exclude)}\nprefer: {len(rules.prefer)}\nconflict: {len(rules.conflict)}")
         return 0
@@ -1870,12 +2076,6 @@ def main() -> int:
                 "title": title,
                 "mod_ids": unresolved_mids,
             })
-            print(
-                "WARNING: multi-mod Workshop item requires "
-                f"PZ_MOD_ID_OVERRIDES selection: {wid} ({title}) -> "
-                f"{', '.join(unresolved_mids)}",
-                file=sys.stderr,
-            )
         elif local_mids and not description_mids:
             print(
                 f"Mod ID read from local mod.info: "
@@ -1971,6 +2171,7 @@ def main() -> int:
             "title": title,
             "mod_ids": valid_mids,
             "discovered_mod_ids": discovered_mids,
+            "explicit_mod_ids": MOD_ID_OVERRIDES.get(wid) or [],
             "local_mod_metadata": local_mod_metadata,
             "map_names": valid_maps,
             "is_map_mod": wid in map_workshop_ids,
@@ -1989,17 +2190,6 @@ def main() -> int:
                 "reason": "manual forced",
             })
             print(f"[PZ-MODS] Manual forced Workshop inclusion added {wid}")
-
-    duplicate_mod_ids = {
-        k: v
-        for k, v in mod_owners.items()
-        if len(
-            {
-                x["workshop_id"]
-                for x in v
-            }
-        ) > 1
-    }
 
     duplicate_maps = {
         k: v
@@ -2021,6 +2211,63 @@ def main() -> int:
             "Muldraugh, KY"
         )
 
+    previous_active_mods = read_last_active_mods(
+        state_file(SCRIPT_DIR),
+        lambda message: print(f"WARNING: [PZ-MODS] {message}", file=sys.stderr),
+    )
+    mod_ids, mod_selection_decisions, auto_removed_pairs, removed_replacements = resolve_mod_selection(
+        records,
+        MOD_SELECTION_RULES,
+        ADMIN_MOD_BLACKLIST,
+        ADMIN_MOD_FORCED,
+        set(previous_active_mods),
+    )
+    selected_by_workshop = {
+        record["workshop_id"]: list(record["mod_ids"])
+        for record in records
+    }
+    for decision in mod_selection_decisions:
+        selected_by_workshop[decision["workshop_id"]] = list(decision["selected"])
+    for replacement in removed_replacements:
+        selected_by_workshop.setdefault(replacement["workshop_id"], []).append(
+            replacement["replacement_mod_id"]
+        )
+    for record in records:
+        record["mod_ids"] = list(dict.fromkeys(
+            selected_by_workshop[record["workshop_id"]]
+        ))
+
+    # The legacy discovery pass must not leave stale unresolved/ownership
+    # diagnostics after Phase 2 selected a safe subset for the item.
+    selected_workshops = {
+        record["workshop_id"] for record in records if record["mod_ids"]
+    }
+    missing_mod_id = [
+        item for item in missing_mod_id
+        if item["workshop_id"] not in selected_workshops
+    ]
+    multi_mod_selection_required = [
+        item for item in multi_mod_selection_required
+        if item["workshop_id"] not in selected_workshops
+    ]
+    for item in multi_mod_selection_required:
+        print(
+            "WARNING: multi-mod Workshop item requires "
+            f"PZ_MOD_ID_OVERRIDES selection: {item['workshop_id']} "
+            f"({item['title']}) -> {', '.join(item['mod_ids'])}",
+            file=sys.stderr,
+        )
+    mod_owners = collections.defaultdict(list)
+    for record in records:
+        for mod_id in record["mod_ids"]:
+            mod_owners[mod_id].append({
+                "workshop_id": record["workshop_id"],
+                "title": record["title"],
+            })
+    duplicate_mod_ids = {
+        mod_id: owners for mod_id, owners in mod_owners.items()
+        if len({owner["workshop_id"] for owner in owners}) > 1
+    }
     inferred_prefer_rules = detect_removed_variant_pairs(records)
     effective_prefer_rules, inferred_rule_diagnostics = reconcile_prefer_rules(
         rules.prefer,
@@ -2037,17 +2284,20 @@ def main() -> int:
         else:
             print(f"[PZ-MODS] Auto-detected {pair}; using explicit project rule")
 
-    previous_active_mods = read_last_active_mods(
-        state_file(SCRIPT_DIR),
-        lambda message: print(f"WARNING: [PZ-MODS] {message}", file=sys.stderr),
-    )
     collection_mod_ids = list(mod_ids)
+    available_mod_ids = {
+        mod_id
+        for record in records
+        for mod_id in record.get("discovered_mod_ids", [])
+        if isinstance(mod_id, str)
+    }
     mod_ids, mod_rule_decisions, conflicts = resolve_mod_rules(
         mod_ids,
         effective_rules,
         ADMIN_MOD_BLACKLIST,
         ADMIN_MOD_FORCED,
         set(previous_active_mods),
+        available_mod_ids,
     )
     for decision in mod_rule_decisions:
         if decision["status"] == "auto_removed_fallback":
@@ -2161,6 +2411,9 @@ def main() -> int:
             for rule in effective_prefer_rules
         ],
         "inferred_removed_variant_pairs": inferred_rule_diagnostics,
+        "mod_selection_decisions": mod_selection_decisions,
+        "auto_removed_pairs": auto_removed_pairs,
+        "removed_replacements": removed_replacements,
         "mod_info_load_order_edges": [
             {"before": before, "after": after, "source": "mod.info"}
             for before, after in mod_info_edges
@@ -2231,6 +2484,9 @@ def main() -> int:
         f"Active mod.info load-order edges: {len(mod_info_edges)}",
         f"Missing required Mod IDs: {len(missing_required_mods)}",
         f"mod.info conflicts: {len(mod_info_conflicts)}",
+        f"Mod selection decisions: {len(mod_selection_decisions)}",
+        f"Auto-discovered Removed pairs: {len(auto_removed_pairs)}",
+        f"Removed replacements activated: {len(removed_replacements)}",
         "",
         "CHANGES SINCE PREVIOUS RUN",
         "-" * 39,
@@ -2317,6 +2573,36 @@ def main() -> int:
                 f'{", ".join(x["mod_ids"])}'
             )
             for x in multi_mod_selection_required
+        ],
+    )
+
+    section(
+        "MOD SELECTION DECISIONS",
+        [
+            f"Workshop {item['workshop_id']}\n"
+            f"  selected: {', '.join(item['selected']) or 'None'}\n"
+            f"  skipped: {', '.join(item['rejected']) or 'None'}\n"
+            f"  reason: {item['reason']}"
+            for item in mod_selection_decisions
+        ],
+    )
+
+    section(
+        "AUTO-DISCOVERED REMOVED PAIRS",
+        [
+            f"Workshop {item['workshop_id']}:\n"
+            f"  {item['base_mod_id']} -> {item['removed_mod_id']}"
+            for item in auto_removed_pairs
+        ],
+    )
+
+    section(
+        "REMOVED MOD REPLACEMENTS",
+        [
+            f"{item['base_mod_id']} -> {item['replacement_mod_id']}\n"
+            f"  reason: {item['reason']}\n"
+            f"  source: {item['source']}"
+            for item in removed_replacements
         ],
     )
 

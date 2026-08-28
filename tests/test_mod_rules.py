@@ -127,6 +127,25 @@ def test_removed_fallback_requires_previous_successful_winner():
     assert not any(item["status"] == "auto_removed_fallback" for item in decisions)
 
 
+def test_removed_fallback_uses_physical_availability_after_selection():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    preference = generator.PreferRule(
+        "Foo", ("FooRemoved",), removed_fallback="FooRemoved",
+    )
+    active, decisions, _ = generator.resolve_mod_rules(
+        ["Foo"], rules(generator, prefer=(preference,)), {"Foo"},
+        previous_active={"Foo"}, available_mod_ids={"Foo", "FooRemoved"},
+    )
+    assert active == ["FooRemoved"]
+    assert decisions[-1]["status"] == "auto_removed_fallback"
+    active, decisions, _ = generator.resolve_mod_rules(
+        ["Foo"], rules(generator, always=("FooRemoved",), prefer=(preference,)), {"Foo"},
+        previous_active={"Foo"}, available_mod_ids={"Foo", "FooRemoved"},
+    )
+    assert active == []
+    assert decisions[-1]["reason"] == "excluded by project always_exclude"
+
+
 def test_removed_fallback_blocked_and_unavailable_are_diagnostic():
     generator = load_path_module(ROOT / "generate-mod-list.py")
     preference = generator.PreferRule("A", ("ARemoved",), removed_fallback="ARemoved")
@@ -339,3 +358,125 @@ def test_effective_validation_detects_transitive_cycle_and_skips_disabled_rules(
     effective, _ = generator.reconcile_prefer_rules(explicit, inferred)
     with pytest.raises(generator.ModRulesError, match="A -> B -> C -> D -> A"):
         generator.validate_effective_prefer_rules(effective)
+
+
+def selection_record(workshop_id, discovered, current=(), explicit=()):
+    return {
+        "workshop_id": workshop_id,
+        "discovered_mod_ids": list(discovered),
+        "mod_ids": list(current),
+        "explicit_mod_ids": list(explicit),
+    }
+
+
+def select(generator, records, selection_rules, blacklist=(), forced=(), previous=()):
+    return generator.resolve_mod_selection(
+        records, selection_rules, set(blacklist), list(forced), set(previous),
+    )
+
+
+def test_selection_auto_discovers_exact_removed_pairs_without_false_matches():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    pairs = generator.discover_removed_pairs("1", ["Foo", "FooRemoved"])
+    assert pairs == [{
+        "workshop_id": "1", "base_mod_id": "Foo", "removed_mod_id": "FooRemoved",
+    }]
+    selected, decisions, auto_pairs, replacements = select(
+        generator, [selection_record("1", ["Foo", "FooRemoved"])], {},
+    )
+    assert selected == ["Foo"]
+    assert decisions[0]["reason"] == "auto_removed_pair"
+    assert auto_pairs == pairs
+    assert replacements == []
+    assert generator.discover_removed_pairs(
+        "2", ["Foo", "FooRemovedExtra", "Foo2", "Foo2RemovedExtra"]
+    ) == []
+    assert generator.discover_removed_pairs("3", ["Foo2", "FooRemoved"]) == []
+
+
+def test_selection_curated_default_optional_and_exclusive_admin_override():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    selection_rules = {
+        "1": {
+            "mod_ids": ["Full", "Lite", "Extra"],
+            "default": ["Full"],
+            "optional": ["Extra"],
+            "exclusive_groups": [["Full", "Lite"]],
+        },
+    }
+    records = [selection_record("1", ["Full", "Lite", "Extra"])]
+    assert select(generator, records, selection_rules)[0] == ["Full"]
+    assert select(generator, records, selection_rules, forced=["Extra"])[0] == ["Full", "Extra"]
+    assert select(generator, records, selection_rules, forced=["Lite"])[0] == ["Lite"]
+    overridden = [selection_record("1", ["Full", "Lite", "Extra"], explicit=["Lite"])]
+    assert select(generator, overridden, selection_rules)[0] == ["Lite"]
+    with pytest.raises(generator.ModSelectionError, match="Conflicting Mod ID variants"):
+        select(generator, records, selection_rules, forced=["Full", "Lite"])
+    assert select(generator, records, selection_rules, blacklist=["Full"])[0] == []
+
+
+def test_selection_condition_and_curated_removed_transition():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    selection_rules = {
+        "1": {
+            "mod_ids": ["Normal", "Compat"],
+            "default": ["Normal"],
+            "exclusive_groups": [["Normal", "Compat"]],
+            "conditions": [{
+                "if_active": ["Dependency"], "select": ["Compat"], "deselect": ["Normal"],
+            }],
+        },
+        "2": {
+            "mod_ids": ["X", "XRemoved"],
+            "default": ["X"],
+            "exclusive_groups": [["X", "XRemoved"]],
+            "removed_replacements": {"X": "XRemoved"},
+        },
+        "3": {"mod_ids": ["Dependency"], "default": ["Dependency"]},
+    }
+    records = [
+        selection_record("1", ["Normal", "Compat"]),
+        selection_record("3", ["Dependency"]),
+        selection_record("2", ["X", "XRemoved"]),
+    ]
+    selected, decisions, _pairs, replacements = select(generator, records, selection_rules)
+    assert selected == ["Compat", "Dependency", "X"]
+    assert decisions[0]["reason"] == "curated_condition"
+    assert replacements == []
+    selected, _decisions, _pairs, replacements = select(
+        generator, records, selection_rules, blacklist=["X"], previous=["X"],
+    )
+    assert selected == ["Compat", "Dependency", "XRemoved"]
+    assert replacements == [{
+        "workshop_id": "2", "base_mod_id": "X", "replacement_mod_id": "XRemoved",
+        "reason": "previously_active_then_removed", "source": "curated_rule",
+    }]
+
+
+def test_selection_validation_and_phase_one_order_follow_selection():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    with pytest.raises(generator.ModSelectionError, match="selects and deselects"):
+        generator.validate_mod_selection_rules({
+            "1": {"mod_ids": ["A"], "conditions": [{
+                "if_active": ["A"], "select": ["A"], "deselect": ["A"],
+            }]},
+        })
+    with pytest.raises(generator.ModSelectionError, match="default Mod ID as optional"):
+        generator.validate_mod_selection_rules({
+            "1": {"mod_ids": ["A"], "default": ["A"], "optional": ["A"]},
+        })
+    selected, _decisions, _pairs, _replacements = select(
+        generator,
+        [
+            selection_record("1", ["Normal", "Compat"]),
+            selection_record("2", ["Framework"], current=["Framework"]),
+        ],
+        {"1": {
+            "mod_ids": ["Normal", "Compat"], "default": ["Compat"],
+            "exclusive_groups": [["Normal", "Compat"]],
+        }},
+    )
+    assert selected == ["Compat", "Framework"]
+    assert generator.reorder_mod_ids(
+        selected, load_before=[("Framework", "Compat")], load_after=[], load_first=[], load_last=[],
+    ) == ["Framework", "Compat"]
