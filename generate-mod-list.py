@@ -420,7 +420,7 @@ def reconcile_prefer_rules(
         loser = inferred.losers[0]
         related = [
             rule for rule in explicit_rules
-            if rule.winner == inferred.winner
+            if (rule.winner == inferred.winner and loser in rule.losers)
             or (rule.winner == loser and inferred.winner in rule.losers)
         ]
         if related:

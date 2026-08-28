@@ -230,6 +230,31 @@ def test_explicit_rules_override_or_disable_auto_pairs_without_duplicates():
     assert generator.resolve_mod_rules(["Foo", "FooRemoved"], rules(generator, prefer=effective))[0] == ["Foo", "FooRemoved"]
 
 
+def test_unrelated_explicit_same_winner_coexists_with_auto_pair():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    inferred = generator.detect_removed_variant_pairs([
+        {"workshop_id": "1", "mod_ids": ["Foo", "FooRemoved"]},
+    ])
+    explicit = generator.PreferRule("Foo", ("Bar",), "independent preference")
+    effective, diagnostics = generator.reconcile_prefer_rules((explicit,), inferred)
+    assert effective == (explicit, inferred[0])
+    assert diagnostics[0]["status"] == "active_auto_rule"
+    assert generator.resolve_mod_rules(
+        ["Foo", "FooRemoved", "Bar"], rules(generator, prefer=effective),
+    )[0] == ["Foo"]
+
+
+def test_explicit_multiple_losers_covers_inferred_pair():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    inferred = generator.detect_removed_variant_pairs([
+        {"workshop_id": "1", "mod_ids": ["Foo", "FooRemoved"]},
+    ])
+    explicit = generator.PreferRule("Foo", ("Bar", "FooRemoved"))
+    effective, diagnostics = generator.reconcile_prefer_rules((explicit,), inferred)
+    assert effective == (explicit,)
+    assert diagnostics[0]["status"] == "superseded_by_explicit"
+
+
 def test_contradictory_explicit_rule_suppresses_auto_pair_deterministically():
     generator = load_path_module(ROOT / "generate-mod-list.py")
     inferred = generator.detect_removed_variant_pairs([
