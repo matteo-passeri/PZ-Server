@@ -446,6 +446,19 @@ def reconcile_prefer_rules(
     return tuple(effective), diagnostics
 
 
+def validate_effective_prefer_rules(rules: tuple[PreferRule, ...]) -> None:
+    """Reject cycles introduced only after Workshop-pair reconciliation."""
+    cycle = _find_prefer_cycle(rules)
+    if cycle:
+        nodes = cycle[:-1]
+        start = min(range(len(nodes)), key=nodes.__getitem__)
+        display_cycle = nodes[start:] + nodes[:start] + [nodes[start]]
+        raise ModRulesError(
+            "Effective prefer rules contain a cycle after automatic "
+            "Removed-pair reconciliation: " + " -> ".join(display_cycle)
+        )
+
+
 def resolve_mod_rules(
     candidates: list[str], rules: ModRules, manual_blacklist: set[str] | None = None,
     forced: list[str] | None = None, previous_active: set[str] | None = None,
@@ -1923,6 +1936,7 @@ def main() -> int:
         rules.prefer,
         inferred_prefer_rules,
     )
+    validate_effective_prefer_rules(effective_prefer_rules)
     effective_rules = ModRules(rules.always_exclude, effective_prefer_rules, rules.conflict)
     for item in inferred_rule_diagnostics:
         pair = f"{item['winner']} -> {item['loser']}"

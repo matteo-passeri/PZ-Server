@@ -278,3 +278,64 @@ def test_auto_pair_does_not_create_historical_fallback():
     )
     assert active == ["BarRemoved"]
     assert not any(item["status"] == "auto_removed_fallback" for item in decisions)
+
+
+def test_effective_validation_detects_cycle_introduced_by_inferred_pair():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    explicit = (
+        generator.PreferRule("FooRemoved", ("Bar",)),
+        generator.PreferRule("Bar", ("Foo",)),
+    )
+    inferred = (generator.PreferRule("Foo", ("FooRemoved",), source="auto_removed_pair"),)
+    effective, _ = generator.reconcile_prefer_rules(explicit, inferred)
+    with pytest.raises(
+        generator.ModRulesError,
+        match="Bar -> Foo -> FooRemoved -> Bar",
+    ):
+        generator.validate_effective_prefer_rules(effective)
+
+
+def test_effective_validation_keeps_non_cyclic_explicit_and_inferred_edges():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    explicit = (generator.PreferRule("Foo", ("Bar",)),)
+    inferred = (generator.PreferRule("Foo", ("FooRemoved",), source="auto_removed_pair"),)
+    effective, _ = generator.reconcile_prefer_rules(explicit, inferred)
+    generator.validate_effective_prefer_rules(effective)
+    assert effective == explicit + inferred
+
+
+def test_suppressed_or_replaced_inferred_pairs_do_not_create_effective_cycles():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    inferred = (generator.PreferRule("Foo", ("FooRemoved",), source="auto_removed_pair"),)
+    # The disabled matching explicit rule removes the inferred edge, so the
+    # remaining rules do not form Foo -> FooRemoved -> Bar -> Foo.
+    disabled = (
+        generator.PreferRule("Foo", ("FooRemoved",), enabled=False),
+        generator.PreferRule("FooRemoved", ("Bar",)),
+        generator.PreferRule("Bar", ("Foo",)),
+    )
+    effective, _ = generator.reconcile_prefer_rules(disabled, inferred)
+    generator.validate_effective_prefer_rules(effective)
+    # Matching and reverse explicit rules likewise leave one edge only.
+    matching = (generator.PreferRule("Foo", ("FooRemoved",)),)
+    effective, _ = generator.reconcile_prefer_rules(matching, inferred)
+    generator.validate_effective_prefer_rules(effective)
+    assert effective == matching
+    reverse = (generator.PreferRule("FooRemoved", ("Foo",)),)
+    effective, _ = generator.reconcile_prefer_rules(reverse, inferred)
+    generator.validate_effective_prefer_rules(effective)
+    assert effective == reverse
+
+
+def test_effective_validation_detects_transitive_cycle_and_skips_disabled_rules():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    explicit = (
+        generator.PreferRule("A", ("B",)),
+        generator.PreferRule("C", ("D",)),
+        generator.PreferRule("D", ("A",)),
+        generator.PreferRule("Unused", ("A",), enabled=False),
+    )
+    inferred = (generator.PreferRule("B", ("C",), source="auto_removed_pair"),)
+    effective, _ = generator.reconcile_prefer_rules(explicit, inferred)
+    with pytest.raises(generator.ModRulesError, match="A -> B -> C -> D -> A"):
+        generator.validate_effective_prefer_rules(effective)
