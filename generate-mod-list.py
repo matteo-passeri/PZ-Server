@@ -10,6 +10,8 @@ import re
 import shutil
 import sys
 import time
+import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,7 @@ import requests
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_ENV_FILE = SCRIPT_DIR / ".env"
+RULES_FILE = SCRIPT_DIR / "mod-rules.toml"
 
 APP_ID = None
 DEFAULT_COLLECTION_ID = None
@@ -29,6 +32,36 @@ BACKUPS_TO_KEEP = None
 DEFAULT_WORKSHOP_ROOT = None
 MOD_ID_OVERRIDES = None
 MOD_BLACKLIST_MODS = None
+ADMIN_MOD_BLACKLIST: set[str] = set()
+ADMIN_MOD_FORCED: list[str] = []
+ADMIN_WORKSHOP_BLACKLIST: set[str] = set()
+ADMIN_WORKSHOP_FORCED: list[str] = []
+
+
+class ModRulesError(RuntimeError):
+    """Raised when the version-controlled mod rules are invalid."""
+
+
+@dataclass(frozen=True)
+class PreferRule:
+    winner: str
+    losers: tuple[str, ...]
+    reason: str | None = None
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
+class ConflictRule:
+    mods: tuple[str, ...]
+    reason: str | None = None
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
+class ModRules:
+    always_exclude: tuple[str, ...]
+    prefer: tuple[PreferRule, ...]
+    conflict: tuple[ConflictRule, ...]
 
 # Hard Mod ID load-order rules.  These affect PZ_MOD_NAMES (the server Mods=
 # value), never PZ_MOD_IDS (the WorkshopItems= value).
@@ -189,6 +222,185 @@ def read_env(path: Path) -> dict[str, str]:
     return result
 
 
+def semicolon_values(env: dict[str, str], key: str) -> list[str]:
+    """Return ordered, de-duplicated administrator values from .env."""
+    return list(dict.fromkeys(
+        value.strip()
+        for value in env.get(key, "").split(";")
+        if value.strip()
+    ))
+
+
+def _rule_mod_id(value: Any, context: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ModRulesError(f"{context}: Mod ID must be a non-empty string")
+    return value.strip()
+
+
+def _optional_rule_text(value: Any, context: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ModRulesError(f"{context}: reason must be a string")
+    return value
+
+
+def _rule_enabled(value: Any, context: str) -> bool:
+    if value is None:
+        return True
+    if not isinstance(value, bool):
+        raise ModRulesError(f"{context}: enabled must be true or false")
+    return value
+
+
+def _find_prefer_cycle(rules: tuple[PreferRule, ...]) -> list[str]:
+    graph: dict[str, list[str]] = collections.defaultdict(list)
+    for rule in rules:
+        if rule.enabled:
+            graph[rule.winner].extend(rule.losers)
+
+    state: dict[str, int] = {}
+    stack: list[str] = []
+
+    def visit(mod_id: str) -> list[str] | None:
+        state[mod_id] = 1
+        stack.append(mod_id)
+        for next_id in graph[mod_id]:
+            if state.get(next_id, 0) == 0:
+                cycle = visit(next_id)
+                if cycle:
+                    return cycle
+            elif state[next_id] == 1:
+                return stack[stack.index(next_id):] + [next_id]
+        stack.pop()
+        state[mod_id] = 2
+        return None
+
+    for mod_id in list(graph):
+        if state.get(mod_id, 0) == 0:
+            cycle = visit(mod_id)
+            if cycle:
+                return cycle
+    return []
+
+
+def load_mod_rules(path: Path = RULES_FILE) -> ModRules:
+    """Load and validate the small, declarative project compatibility layer."""
+    try:
+        with path.open("rb") as handle:
+            raw = tomllib.load(handle)
+    except FileNotFoundError as exc:
+        raise ModRulesError(f"mod rules file not found: {path}") from exc
+    except tomllib.TOMLDecodeError as exc:
+        raise ModRulesError(f"{path}: invalid TOML: {exc}") from exc
+
+    if not isinstance(raw, dict) or set(raw) - {"mods", "workshop"}:
+        raise ModRulesError(f"{path}: only [mods] and [workshop] are allowed")
+    mods = raw.get("mods", {})
+    workshop = raw.get("workshop", {})
+    if not isinstance(mods, dict) or not isinstance(workshop, dict):
+        raise ModRulesError(f"{path}: [mods] and [workshop] must be tables")
+    if set(mods) - {"always_exclude", "prefer", "conflict"}:
+        raise ModRulesError(f"{path}: unknown [mods] key")
+    if set(workshop) - {"always_exclude"}:
+        raise ModRulesError(f"{path}: unknown [workshop] key")
+    if workshop.get("always_exclude", []) not in ([], None):
+        raise ModRulesError(f"{path}: workshop always_exclude is reserved for a future resolver")
+
+    always_raw = mods.get("always_exclude", [])
+    if not isinstance(always_raw, list):
+        raise ModRulesError(f"{path}: mods.always_exclude must be a list")
+    always = tuple(_rule_mod_id(value, f"{path}: always_exclude #{index}")
+                   for index, value in enumerate(always_raw, 1))
+    duplicates = sorted({value for value in always if always.count(value) > 1})
+    if duplicates:
+        raise ModRulesError(f"{path}: duplicate always_exclude Mod IDs: {', '.join(duplicates)}")
+
+    def parse_prefer(index: int, value: Any) -> PreferRule:
+        context = f"{path}: prefer rule #{index}"
+        if not isinstance(value, dict) or set(value) - {"winner", "losers", "reason", "enabled"}:
+            raise ModRulesError(f"{context}: expected winner, losers, optional reason/enabled")
+        winner = _rule_mod_id(value.get("winner"), context + " winner")
+        losers_raw = value.get("losers")
+        if not isinstance(losers_raw, list) or not losers_raw:
+            raise ModRulesError(f"{context}: losers must be a non-empty list")
+        losers = tuple(_rule_mod_id(item, context + " losers") for item in losers_raw)
+        if winner in losers:
+            raise ModRulesError(f'{context}: winner "{winner}" also appears in losers')
+        duplicate_losers = sorted({item for item in losers if losers.count(item) > 1})
+        if duplicate_losers:
+            raise ModRulesError(f"{context}: duplicate losers: {', '.join(duplicate_losers)}")
+        return PreferRule(winner, losers, _optional_rule_text(value.get("reason"), context),
+                          _rule_enabled(value.get("enabled"), context))
+
+    prefer_raw = mods.get("prefer", [])
+    if not isinstance(prefer_raw, list):
+        raise ModRulesError(f"{path}: mods.prefer must be an array of tables")
+    prefer = tuple(parse_prefer(index, value) for index, value in enumerate(prefer_raw, 1))
+    prefer_keys = [(rule.winner, rule.losers) for rule in prefer]
+    duplicate_prefer = [key for key in prefer_keys if prefer_keys.count(key) > 1]
+    if duplicate_prefer:
+        winner, losers = duplicate_prefer[0]
+        raise ModRulesError(f"{path}: duplicate prefer rule: {winner} -> {', '.join(losers)}")
+    cycle = _find_prefer_cycle(prefer)
+    if cycle:
+        raise ModRulesError(f"{path}: prefer cycle: {' -> '.join(cycle)}")
+
+    def parse_conflict(index: int, value: Any) -> ConflictRule:
+        context = f"{path}: conflict rule #{index}"
+        if not isinstance(value, dict) or set(value) - {"mods", "reason", "enabled"}:
+            raise ModRulesError(f"{context}: expected mods, optional reason/enabled")
+        values = value.get("mods")
+        if not isinstance(values, list):
+            raise ModRulesError(f"{context}: mods must be a list")
+        mod_ids = tuple(_rule_mod_id(item, context + " mods") for item in values)
+        if len(mod_ids) < 2:
+            raise ModRulesError(f"{context}: conflict requires at least two Mod IDs")
+        duplicate_ids = sorted({item for item in mod_ids if mod_ids.count(item) > 1})
+        if duplicate_ids:
+            raise ModRulesError(f"{context}: duplicate Mod IDs: {', '.join(duplicate_ids)}")
+        return ConflictRule(mod_ids, _optional_rule_text(value.get("reason"), context),
+                            _rule_enabled(value.get("enabled"), context))
+
+    conflict_raw = mods.get("conflict", [])
+    if not isinstance(conflict_raw, list):
+        raise ModRulesError(f"{path}: mods.conflict must be an array of tables")
+    return ModRules(always, prefer, tuple(parse_conflict(i, value) for i, value in enumerate(conflict_raw, 1)))
+
+
+def resolve_mod_rules(
+    candidates: list[str], rules: ModRules, manual_blacklist: set[str] | None = None,
+    forced: list[str] | None = None,
+) -> tuple[list[str], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Resolve project rules in file order; forced IDs are appended afterward."""
+    active = list(dict.fromkeys(candidates))
+    decisions: list[dict[str, Any]] = []
+    manual_blacklist = manual_blacklist or set()
+    for mod_id in list(active):
+        if mod_id in rules.always_exclude:
+            active.remove(mod_id)
+            decisions.append({"mod_id": mod_id, "status": "excluded", "reason": "project always_exclude"})
+        elif mod_id in manual_blacklist:
+            active.remove(mod_id)
+            decisions.append({"mod_id": mod_id, "status": "excluded", "reason": "manual blacklist"})
+    for rule in rules.prefer:
+        if rule.enabled and rule.winner in active:
+            for loser in rule.losers:
+                if loser in active:
+                    active.remove(loser)
+                    decisions.append({"mod_id": loser, "status": "excluded", "reason": "superseded", "superseded_by": rule.winner, "rule_reason": rule.reason})
+    for mod_id in forced or []:
+        if mod_id not in active:
+            active.append(mod_id)
+            decisions.append({"mod_id": mod_id, "status": "included", "reason": "manual forced"})
+    conflicts = [
+        {"mods": list(rule.mods), "reason": rule.reason}
+        for rule in rules.conflict
+        if rule.enabled and all(mod_id in active for mod_id in rule.mods)
+    ]
+    return active, decisions, conflicts
+
+
 def required_env(env: dict[str, str], key: str) -> str:
     value = env.get(key, "").strip()
 
@@ -214,7 +426,7 @@ def positive_int_env(env: dict[str, str], key: str) -> int:
     return value
 
 
-def load_configuration() -> None:
+def load_configuration(path: Path = CONFIG_ENV_FILE) -> None:
     global APP_ID
     global DEFAULT_COLLECTION_ID
     global MAP_COLLECTION_IDS
@@ -226,8 +438,12 @@ def load_configuration() -> None:
     global DEFAULT_WORKSHOP_ROOT
     global MOD_ID_OVERRIDES
     global MOD_BLACKLIST_MODS
+    global ADMIN_MOD_BLACKLIST
+    global ADMIN_MOD_FORCED
+    global ADMIN_WORKSHOP_BLACKLIST
+    global ADMIN_WORKSHOP_FORCED
 
-    env = read_env(CONFIG_ENV_FILE)
+    env = read_env(path)
 
     APP_ID = positive_int_env(env, "PZ_APP_ID")
     DEFAULT_COLLECTION_ID = required_env(env, "PZ_DEFAULT_COLLECTION_ID")
@@ -288,11 +504,23 @@ def load_configuration() -> None:
         normalized_overrides[workshop_id] = mod_ids
 
     MOD_ID_OVERRIDES = normalized_overrides
-    MOD_BLACKLIST_MODS = {
-        mod_id.strip()
-        for mod_id in env.get("PZ_MOD_BLACKLIST_MODS", "").split(";")
-        if mod_id.strip()
-    }
+    ADMIN_MOD_BLACKLIST = set(semicolon_values(env, "PZ_MOD_BLACKLIST_MODS"))
+    ADMIN_MOD_FORCED = semicolon_values(env, "PZ_MOD_FORCED_MODS")
+    ADMIN_WORKSHOP_BLACKLIST = set(semicolon_values(env, "PZ_MOD_BLACKLIST_WORKSHOP"))
+    ADMIN_WORKSHOP_FORCED = semicolon_values(env, "PZ_MOD_FORCED_WORKSHOP")
+    MOD_BLACKLIST_MODS = ADMIN_MOD_BLACKLIST
+
+    for label, blacklisted, forced in (
+        ("Mod IDs", ADMIN_MOD_BLACKLIST, set(ADMIN_MOD_FORCED)),
+        ("Workshop IDs", ADMIN_WORKSHOP_BLACKLIST, set(ADMIN_WORKSHOP_FORCED)),
+    ):
+        contradictory = sorted(blacklisted & forced)
+        if contradictory:
+            print(
+                "WARNING: administrator configuration both blacklists and forces "
+                f"{label}: {', '.join(contradictory)}. Forced inclusion wins.",
+                file=sys.stderr,
+            )
 
 
 def parse_args() -> argparse.Namespace:
@@ -310,10 +538,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--strict", action="store_true", help="Exit 2 when serious issues are found")
     p.add_argument("--no-env-update", action="store_true", help="Do not modify .env")
     p.add_argument("--no-backup", action="store_true")
+    p.add_argument("--rules-file", type=Path, default=RULES_FILE)
+    p.add_argument("--validate-rules", action="store_true", help="Validate mod-rules.toml without Steam or .env")
+    p.add_argument("--list-rules", action="store_true", help="Print validated project mod rules without Steam or .env")
     p.add_argument(
         "--workshop-root",
         type=Path,
-        default=DEFAULT_WORKSHOP_ROOT,
+        default=None,
         help=(
             "Local steamapps/workshop/content/108600 directory "
             "used as a fallback to read mod.info"
@@ -1143,9 +1374,41 @@ def update_env_file(
     return backup
 
 
+def print_rules(rules: ModRules) -> None:
+    print("ALWAYS EXCLUDE")
+    for mod_id in rules.always_exclude:
+        print(mod_id)
+    print("\nPREFER")
+    for rule in rules.prefer:
+        state = " (disabled)" if not rule.enabled else ""
+        print(f"{rule.winner}{state}\n  -> suppresses {', '.join(rule.losers)}")
+        if rule.reason:
+            print(f"  reason: {rule.reason}")
+    print("\nCONFLICT")
+    for rule in rules.conflict:
+        state = " (disabled)" if not rule.enabled else ""
+        print(f"{' <-> '.join(rule.mods)}{state}")
+        if rule.reason:
+            print(f"  reason: {rule.reason}")
+
+
 def main() -> int:
-    load_configuration()
     args = parse_args()
+    rules_path = args.rules_file.expanduser()
+    if not rules_path.is_absolute():
+        rules_path = (Path.cwd() / rules_path).resolve()
+    rules = load_mod_rules(rules_path)
+    if args.validate_rules:
+        print(f"Rules OK\nalways_exclude: {len(rules.always_exclude)}\nprefer: {len(rules.prefer)}\nconflict: {len(rules.conflict)}")
+        return 0
+    if args.list_rules:
+        print_rules(rules)
+        return 0
+
+    env_path = args.env_file.expanduser()
+    if not env_path.is_absolute():
+        env_path = (Path.cwd() / env_path).resolve()
+    load_configuration(env_path)
 
     try:
         mod_collection_ids = normalize_collection_ids(
@@ -1175,21 +1438,13 @@ def main() -> int:
         .resolve()
     )
 
-    env_path = args.env_file.expanduser()
-
-    if not env_path.is_absolute():
-        env_path = (
-            Path.cwd()
-            / env_path
-        ).resolve()
-
     outdir.mkdir(
         parents=True,
         exist_ok=True,
     )
 
     workshop_root = (
-        args.workshop_root
+        (args.workshop_root or DEFAULT_WORKSHOP_ROOT)
         .expanduser()
         .resolve()
     )
@@ -1296,6 +1551,7 @@ def main() -> int:
     suspicious: list[dict[str, Any]] = []
     malformed: list[dict[str, str]] = []
     records: list[dict[str, Any]] = []
+    workshop_decisions: list[dict[str, str]] = []
 
     mod_owners: dict[
         str,
@@ -1308,6 +1564,14 @@ def main() -> int:
     ] = collections.defaultdict(list)
 
     for wid in collection_ids:
+        if wid in ADMIN_WORKSHOP_BLACKLIST and wid not in ADMIN_WORKSHOP_FORCED:
+            workshop_decisions.append({
+                "workshop_id": wid,
+                "status": "excluded",
+                "reason": "manual blacklist",
+            })
+            print(f"[PZ-MODS] Manual Workshop blacklist removed {wid}")
+            continue
         d = by_id.get(wid)
 
         if (
@@ -1381,7 +1645,6 @@ def main() -> int:
             description_mids,
             local_mids,
             MOD_ID_OVERRIDES.get(wid),
-            MOD_BLACKLIST_MODS,
         )
 
         if wid in MOD_ID_OVERRIDES:
@@ -1501,6 +1764,18 @@ def main() -> int:
             "time_updated": d.get("time_updated"),
         })
 
+    # Preserve existing forced Workshop semantics.  A forced item may not have
+    # been part of a fetched collection, so its Mod IDs cannot be inferred here.
+    for wid in ADMIN_WORKSHOP_FORCED:
+        if wid not in workshop_ids:
+            workshop_ids.append(wid)
+            workshop_decisions.append({
+                "workshop_id": wid,
+                "status": "included",
+                "reason": "manual forced",
+            })
+            print(f"[PZ-MODS] Manual forced Workshop inclusion added {wid}")
+
     duplicate_mod_ids = {
         k: v
         for k, v in mod_owners.items()
@@ -1533,15 +1808,29 @@ def main() -> int:
         )
 
     collection_mod_ids = list(mod_ids)
+    mod_ids, mod_rule_decisions, conflicts = resolve_mod_rules(
+        mod_ids,
+        rules,
+        ADMIN_MOD_BLACKLIST,
+        ADMIN_MOD_FORCED,
+    )
+    for decision in mod_rule_decisions:
+        if decision["reason"] == "superseded":
+            print(f"[PZ-MODS] Excluding {decision['mod_id']}: superseded by {decision['superseded_by']}")
+        elif decision["reason"] == "manual blacklist":
+            print(f"[PZ-MODS] Manual blacklist removed {decision['mod_id']}")
+        elif decision["reason"] == "project always_exclude":
+            print(f"[PZ-MODS] Excluding {decision['mod_id']}: project always_exclude")
+    for conflict in conflicts:
+        print(f"[PZ-MODS] Conflict: {' and '.join(conflict['mods'])} are both active", file=sys.stderr)
+    resolved_mod_ids = list(mod_ids)
     try:
         mod_ids = reorder_mod_ids(mod_ids)
     except ModLoadOrderError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    load_order_adjustments = mod_load_order_adjustments(
-        collection_mod_ids,
-    )
+    load_order_adjustments = mod_load_order_adjustments(resolved_mod_ids)
 
     if load_order_adjustments:
         print("Mod load-order adjustments:")
@@ -1600,6 +1889,9 @@ def main() -> int:
         "workshop_ids": workshop_ids,
         "mod_ids": mod_ids,
         "mod_load_order_adjustments": load_order_adjustments,
+        "mod_rule_decisions": mod_rule_decisions,
+        "workshop_decisions": workshop_decisions,
+        "conflicts": conflicts,
         "map_names": final_maps,
         "records": records,
         "duplicate_workshop_ids_in_collection": duplicate_workshop_ids,
@@ -1765,6 +2057,43 @@ def main() -> int:
     section(
         "MOD LOAD-ORDER ADJUSTMENTS",
         load_order_adjustments,
+    )
+
+    section(
+        "AUTOMATIC MOD RULES",
+        [
+            (
+                f"{decision['mod_id']}\n"
+                f"  excluded: {decision['reason']}"
+                + (f" by {decision['superseded_by']}" if decision.get("superseded_by") else "")
+                + (f"\n  rule: {decision['rule_reason']}" if decision.get("rule_reason") else "")
+            )
+            for decision in mod_rule_decisions
+            if decision["reason"] != "manual blacklist"
+        ],
+    )
+
+    section(
+        "MANUAL EXCLUSIONS",
+        [
+            f"{decision['mod_id']}\n  excluded by PZ_MOD_BLACKLIST_MODS"
+            for decision in mod_rule_decisions
+            if decision["reason"] == "manual blacklist"
+        ] + [
+            f"{decision['workshop_id']}\n  excluded by PZ_MOD_BLACKLIST_WORKSHOP"
+            for decision in workshop_decisions
+            if decision["status"] == "excluded"
+        ],
+    )
+
+    section(
+        "CONFLICTS",
+        [
+            " <-> ".join(conflict["mods"])
+            + "\n  both remain active"
+            + (f"\n  reason: {conflict['reason']}" if conflict.get("reason") else "")
+            for conflict in conflicts
+        ],
     )
 
     section(

@@ -46,7 +46,8 @@ whole checkout to the server root and run all commands from there.
 | --- | --- |
 | `docker-compose.yml` | Server Compose definition. |
 | `entrypoint.sh` | Custom container entrypoint. |
-| `generate-mod-list.py` | Builds `PZ_MOD_IDS`, `PZ_MOD_NAMES`, and `PZ_MAP_NAMES` from Steam Workshop collections. |
+| `generate-mod-list.py` | Resolves collections and mod rules, then builds `PZ_MOD_IDS`, `PZ_MOD_NAMES`, and `PZ_MAP_NAMES`. |
+| `mod-rules.toml` | Version-controlled shared Mod-ID compatibility policy. |
 | `apply-local-fixes.py` and `fix-scripts/` | Idempotent, guarded patches for downloaded Workshop files. |
 | `check-mod-updates.py` and `check_mod_updates/` | Detects Workshop updates and safely recreates the server when it is empty. |
 | `pz-mod-check.service` and `pz-mod-check.timer` | Optional user-level systemd scheduling templates. |
@@ -79,6 +80,71 @@ dependency exceptions are encoded as hard Mod ID rules in `MOD_LOAD_FIRST`,
 the ordered `MOD_LOAD_LAST` group. These rules affect `PZ_MOD_NAMES`/`Mods=`
 only; `PZ_MOD_IDS` remains the normal unique Workshop ID list used by the update
 checker. `PZ_LASTTOLOAD_COLLECTION_ID` is no longer supported.
+
+## Maintaining mod rules
+
+`mod-rules.toml` is the shared, version-controlled compatibility layer.
+`.env` remains the administrator layer for one server: use
+`PZ_MOD_BLACKLIST_WORKSHOP`, `PZ_MOD_BLACKLIST_MODS`,
+`PZ_MOD_FORCED_WORKSHOP`, and `PZ_MOD_FORCED_MODS` for explicit local choices.
+Do not put generally known compatibility knowledge in `.env`.
+
+To always exclude a known obsolete Mod ID, add one string under
+`[mods].always_exclude`:
+
+```toml
+[mods]
+always_exclude = [
+    "ObsoleteMod",
+]
+```
+
+To select a normal variant when both are available, add a `prefer` rule. A
+reason documents non-obvious compatibility knowledge. Set `enabled = false`
+to temporarily disable a structured rule, or remove/comment it out.
+
+```toml
+[[mods.prefer]]
+winner = "WorkingGutters"
+losers = ["WorkingGuttersRemoved"]
+reason = "These variants are mutually exclusive."
+```
+
+For an incompatibility without a universal winner, report it rather than
+silently choosing one:
+
+```toml
+[[mods.conflict]]
+mods = ["ModA", "ModB"]
+reason = "These variants cannot be enabled simultaneously."
+```
+
+Validate an edit without Steam, Workshop content, or a server installation:
+
+```bash
+python3 generate-mod-list.py --validate-rules
+python3 generate-mod-list.py --list-rules
+```
+
+Resolution is deterministic: collections are read first; project
+`always_exclude` and administrator blacklists remove candidates; enabled
+`prefer` rules run in file order against that evolving active set; administrator
+forced additions are appended; conflicts are reported; then the existing
+load-order rules run. A preference cycle is rejected during validation.
+
+For example, a collection containing `WorkingGutters` and
+`WorkingGuttersRemoved` keeps `WorkingGutters`. With
+`PZ_MOD_BLACKLIST_MODS=WorkingGutters`, the winner is removed before preference
+evaluation, so `WorkingGuttersRemoved` remains active. Chained rules therefore
+behave predictably: `A -> B` followed by `B -> C`, with `A,B,C` active, results
+in `A,C` because the first rule removed `B`.
+
+Workshop IDs and Mod IDs are deliberately separate. A Workshop item can expose
+several Mod IDs. Excluding one Mod ID never removes its Workshop item, even if
+it is currently the only resolved ID: retaining it is conservative for shared
+assets, dependencies, and incomplete metadata. Only an explicit administrator
+Workshop blacklist removes a Workshop item. The generator is the authoritative
+resolver; the container entrypoint consumes its generated lists unchanged.
 
 Run local patches after Workshop content downloads:
 

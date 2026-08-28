@@ -64,98 +64,6 @@ modify_jvm_config () {
   echo "$(timestamp) INFO: JVM Xmx and Xms set to ${MAX_MEMORY}"
 }
 
-# ------------------------------------------------------------
-# Mod blacklist / forced list
-#
-# Workshop IDs -> MOD_IDS / WorkshopItems
-# Mod IDs      -> MOD_NAMES / Mods
-# ------------------------------------------------------------
-
-# Lists are semicolon-separated environment variables, supplied by Compose.
-IFS=';' read -r -a MOD_BLACKLIST_WORKSHOP <<< "${MOD_BLACKLIST_WORKSHOP:-}"
-IFS=';' read -r -a MOD_BLACKLIST_MODS <<< "${MOD_BLACKLIST_MODS:-}"
-IFS=';' read -r -a MOD_FORCED_WORKSHOP <<< "${MOD_FORCED_WORKSHOP:-}"
-IFS=';' read -r -a MOD_FORCED_MODS <<< "${MOD_FORCED_MODS:-}"
-
-
-filter_mod_list () {
-  local current="$1"
-  local blacklist_name="$2"
-  local forced_name="$3"
-
-  local -n blacklist_ref="${blacklist_name}"
-  local -n forced_ref="${forced_name}"
-
-  local -a input=()
-  local -a output=()
-  local item
-  local blocked
-  local exists
-
-  IFS=';' read -r -a input <<< "${current}"
-
-  # Keep current items except blacklisted ones.
-  for item in "${input[@]}"; do
-    [ -n "${item}" ] || continue
-
-    blocked=0
-
-    for banned in "${blacklist_ref[@]}"; do
-      if [ "${item}" = "${banned}" ]; then
-        blocked=1
-        break
-      fi
-    done
-
-    [ "${blocked}" -eq 0 ] || continue
-
-    # Avoid duplicates.
-    exists=0
-
-    for existing in "${output[@]}"; do
-      if [ "${existing}" = "${item}" ]; then
-        exists=1
-        break
-      fi
-    done
-
-    if [ "${exists}" -eq 0 ]; then
-      output+=("${item}")
-    fi
-  done
-
-  # Aggiungi gli elementi forced se mancanti.
-  for item in "${forced_ref[@]}"; do
-    [ -n "${item}" ] || continue
-
-    exists=0
-
-    for existing in "${output[@]}"; do
-      if [ "${existing}" = "${item}" ]; then
-        exists=1
-        break
-      fi
-    done
-
-    if [ "${exists}" -eq 0 ]; then
-      output+=("${item}")
-    fi
-  done
-
-  local result=""
-
-  for item in "${output[@]}"; do
-    if [ -n "${result}" ]; then
-      result="${result};${item}"
-    else
-      result="${item}"
-    fi
-  done
-
-  printf '%s' "${result}"
-}
-
-
 # Function to edit server configuration
 modify_server_config () {
   echo ""
@@ -189,19 +97,10 @@ modify_server_config () {
   config_editor --config "${SERVER_CONFIG}" --key AntiCheatProtectionType21 --value "${ANTI_CHEAT_TYPE21}"
   echo "$(timestamp) INFO: AntiCheatProtectionType21 set to: ${ANTI_CHEAT_TYPE21}"
 
-  MOD_IDS="$(
-    filter_mod_list       "${MOD_IDS}"       MOD_BLACKLIST_WORKSHOP       MOD_FORCED_WORKSHOP
-  )"
-
-  MOD_NAMES="$(
-    filter_mod_list       "${MOD_NAMES}"       MOD_BLACKLIST_MODS       MOD_FORCED_MODS
-  )"
-
-  echo "$(timestamp) INFO: Mod filters applied"
-  echo "$(timestamp) INFO: Workshop blacklist: ${MOD_BLACKLIST_WORKSHOP[*]:-(empty)}"
-  echo "$(timestamp) INFO: Workshop forced: ${MOD_FORCED_WORKSHOP[*]:-(empty)}"
-  echo "$(timestamp) INFO: Mods blacklist: ${MOD_BLACKLIST_MODS[*]:-(empty)}"
-  echo "$(timestamp) INFO: Mods forced: ${MOD_FORCED_MODS[*]:-(empty)}"
+  # generate-mod-list.py is the authoritative resolver for administrator
+  # overrides and project compatibility rules.  Do not re-filter here: that
+  # would make the generated report disagree with the server configuration.
+  echo "$(timestamp) INFO: Using resolved mod lists from generate-mod-list.py"
 
   config_editor --config "${SERVER_CONFIG}" --key WorkshopItems --value "${MOD_IDS}"
   echo "$(timestamp) INFO: WorkshopItems set to: ${MOD_IDS}"

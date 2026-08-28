@@ -1,0 +1,42 @@
+# Shared Project Zomboid Mod-ID compatibility policy.
+# Server administrators keep their local choices in .env instead.
+
+[mods]
+# Known obsolete/alternative IDs from this deployment's supported mod set.
+# Comment out or remove an entry to stop excluding it.
+always_exclude = [
+    "EQUIPMENT_UI",
+    "equipmentuipatch",
+    "Neat_Building_Buildables_SESCompat",
+    "Neat_Building_Railings",
+    "Neat_Building_UIOnly",
+    "VVA_slowdoors",
+    "zHBVCEF",
+    "HBACVFE",
+    "HBACVFE93",
+    "HBACVFES",
+]
+
+# Removed variants remain available when an administrator explicitly disables
+# their normal counterpart. Rules run in file order against the evolving set.
+[[mods.prefer]]
+winner = "Waterpipes"
+losers = ["WaterpipesRemoved"]
+reason = "The normal and Removed Waterpipes variants are mutually exclusive."
+
+[[mods.prefer]]
+winner = "FunctionalGutters"
+losers = ["FunctionalGuttersRemoved"]
+reason = "The normal and Removed Functional Gutters variants are mutually exclusive."
+
+[[mods.prefer]]
+winner = "WorkingGutters"
+losers = ["WorkingGuttersRemoved"]
+reason = "The normal and Removed Working Gutters variants are mutually exclusive."
+
+# Add [[mods.conflict]] rules for incompatibilities without a universal winner.
+
+[workshop]
+# Reserved for future project-wide Workshop-ID rules. Mod-ID rules above do not
+# remove Workshop items, because one item may expose multiple active Mod IDs.
+always_exclude = []
