@@ -165,3 +165,91 @@ def test_removed_fallback_validation(tmp_path, rule_text, message):
     path.write_text(f"[mods]\n[[mods.prefer]]\nwinner = 'A'\nlosers = ['B']\n{rule_text}\n", encoding="utf-8")
     with pytest.raises(generator.ModRulesError, match=message):
         generator.load_mod_rules(path)
+
+
+def test_auto_detects_exact_removed_pairs_within_one_workshop_item():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    inferred = generator.detect_removed_variant_pairs([
+        {"workshop_id": "1", "mod_ids": ["Foo", "FooRemoved", "FooPatch", "OtherMod"]},
+    ])
+    assert [(rule.winner, rule.losers, rule.workshop_id) for rule in inferred] == [
+        ("Foo", ("FooRemoved",), "1"),
+    ]
+    effective, diagnostics = generator.reconcile_prefer_rules((), inferred)
+    assert generator.resolve_mod_rules(["Foo", "FooRemoved", "FooPatch", "OtherMod"], rules(generator, prefer=effective))[0] == ["Foo", "FooPatch", "OtherMod"]
+    assert diagnostics[0]["status"] == "active_auto_rule"
+
+
+def test_auto_detection_uses_discovered_ids_without_activating_unresolved_mods():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    inferred = generator.detect_removed_variant_pairs([
+        {"workshop_id": "1", "mod_ids": [], "discovered_mod_ids": ["Foo", "FooRemoved", "FooPatch"]},
+    ])
+    assert [(rule.winner, rule.losers) for rule in inferred] == [("Foo", ("FooRemoved",))]
+    effective, _ = generator.reconcile_prefer_rules((), inferred)
+    # Discovery remains metadata until the existing Workshop selection process
+    # provides IDs to the active candidate list.
+    assert generator.resolve_mod_rules([], rules(generator, prefer=effective))[0] == []
+
+
+def test_auto_removed_pairs_require_same_workshop_and_exact_case_sensitive_suffix():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    assert generator.detect_removed_variant_pairs([
+        {"workshop_id": "1", "mod_ids": ["Foo"]},
+        {"workshop_id": "2", "mod_ids": ["FooRemoved"]},
+        {"workshop_id": "3", "mod_ids": ["Bar", "Bar_Removed", "Bar-Removed", "RemovedBar"]},
+        {"workshop_id": "4", "mod_ids": ["Case", "caseremoved"]},
+    ]) == ()
+    inferred = generator.detect_removed_variant_pairs([
+        {"workshop_id": "5", "mod_ids": ["Foo", "FooRemoved", "Bar", "BarRemoved"]},
+    ])
+    assert [(rule.winner, rule.losers) for rule in inferred] == [
+        ("Foo", ("FooRemoved",)), ("Bar", ("BarRemoved",)),
+    ]
+
+
+def test_explicit_rules_override_or_disable_auto_pairs_without_duplicates():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    inferred = generator.detect_removed_variant_pairs([
+        {"workshop_id": "1", "mod_ids": ["Foo", "FooRemoved"]},
+    ])
+    explicit = generator.PreferRule("Foo", ("FooRemoved",), "known", removed_fallback="FooRemoved")
+    effective, diagnostics = generator.reconcile_prefer_rules((explicit,), inferred)
+    assert effective == (explicit,)
+    assert diagnostics[0]["status"] == "superseded_by_explicit"
+    active, decisions, _ = generator.resolve_mod_rules(
+        ["Foo", "FooRemoved"], rules(generator, prefer=effective), {"Foo"},
+        previous_active={"Foo"},
+    )
+    assert active == ["FooRemoved"]
+    assert sum(item["status"] == "auto_removed_fallback" for item in decisions) == 1
+    disabled = generator.PreferRule("Foo", ("FooRemoved",), enabled=False)
+    effective, diagnostics = generator.reconcile_prefer_rules((disabled,), inferred)
+    assert effective == (disabled,)
+    assert diagnostics[0]["status"] == "suppressed_by_disabled_explicit"
+    assert generator.resolve_mod_rules(["Foo", "FooRemoved"], rules(generator, prefer=effective))[0] == ["Foo", "FooRemoved"]
+
+
+def test_contradictory_explicit_rule_suppresses_auto_pair_deterministically():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    inferred = generator.detect_removed_variant_pairs([
+        {"workshop_id": "1", "mod_ids": ["Foo", "FooRemoved"]},
+    ])
+    explicit = generator.PreferRule("FooRemoved", ("Foo",), "intentional reverse preference")
+    effective, diagnostics = generator.reconcile_prefer_rules((explicit,), inferred)
+    assert effective == (explicit,)
+    assert diagnostics[0]["status"] == "superseded_by_explicit"
+    assert generator.resolve_mod_rules(["Foo", "FooRemoved"], rules(generator, prefer=effective))[0] == ["FooRemoved"]
+
+
+def test_auto_pair_does_not_create_historical_fallback():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    inferred = generator.detect_removed_variant_pairs([
+        {"workshop_id": "1", "mod_ids": ["Bar", "BarRemoved"]},
+    ])
+    effective, _ = generator.reconcile_prefer_rules((), inferred)
+    active, decisions, _ = generator.resolve_mod_rules(
+        ["Bar", "BarRemoved"], rules(generator, prefer=effective), {"Bar"}, previous_active={"Bar"},
+    )
+    assert active == ["BarRemoved"]
+    assert not any(item["status"] == "auto_removed_fallback" for item in decisions)

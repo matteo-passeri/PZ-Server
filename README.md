@@ -138,6 +138,22 @@ Workshop content, it reports an unresolved fallback and does not invent a
 Workshop ID. On a first run, or when the original mod was never in successful
 state, no fallback is automatically added.
 
+### Automatic Removed pairs
+
+When one resolved Workshop item exposes exact, case-sensitive Mod IDs `Foo`
+and `FooRemoved`, the generator automatically treats `Foo` as preferred over
+`FooRemoved`. The item may expose additional Mod IDs; only the exact pair is
+affected. IDs split across Workshop items, and names such as `Foo_Removed` or
+`fooRemoved`, are not inferred.
+
+This automatic relationship is a normal `prefer` only. It never creates a
+historical-save fallback. Add an explicit rule with `removed_fallback` when
+the Removed ID is known to preserve an existing save. Explicit TOML rules take
+precedence over inference, including `enabled = false`, which deliberately
+suppresses an otherwise inferred pair. Inferred pairs are reported in generated
+JSON and under `AUTO-DETECTED REMOVED VARIANTS`; they are never written to
+`.env` or `mod-rules.toml`.
+
 Startup and runtime log audits separately identify WorldDictionary removed-mod
 diagnostics, including `WorldDictionaryException`, missing dictionary scripts,
 world-load dictionary errors, and nearby `removed = true` / `modID = ...`

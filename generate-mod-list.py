@@ -50,6 +50,8 @@ class PreferRule:
     reason: str | None = None
     enabled: bool = True
     removed_fallback: str | None = None
+    source: str = "explicit_rule"
+    workshop_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -381,13 +383,78 @@ def load_mod_rules(path: Path = RULES_FILE) -> ModRules:
     return ModRules(always, prefer, tuple(parse_conflict(i, value) for i, value in enumerate(conflict_raw, 1)))
 
 
+def detect_removed_variant_pairs(records: list[dict[str, Any]]) -> tuple[PreferRule, ...]:
+    """Infer exact X -> XRemoved relationships within individual Workshop items."""
+    pairs: list[PreferRule] = []
+    seen: set[tuple[str, str]] = set()
+    for record in records:
+        mod_ids = record.get("discovered_mod_ids", record.get("mod_ids", []))
+        workshop_id = record.get("workshop_id")
+        if not isinstance(mod_ids, list) or not isinstance(workshop_id, str):
+            continue
+        present = {mod_id for mod_id in mod_ids if isinstance(mod_id, str)}
+        for removed_id in mod_ids:
+            if not isinstance(removed_id, str) or not removed_id.endswith("Removed"):
+                continue
+            winner = removed_id.removesuffix("Removed")
+            key = (winner, removed_id)
+            if winner and winner in present and key not in seen:
+                seen.add(key)
+                pairs.append(PreferRule(
+                    winner=winner,
+                    losers=(removed_id,),
+                    reason="Exact X/XRemoved pair in the same Workshop item.",
+                    source="auto_removed_pair",
+                    workshop_id=workshop_id,
+                ))
+    return tuple(pairs)
+
+
+def reconcile_prefer_rules(
+    explicit_rules: tuple[PreferRule, ...], inferred_rules: tuple[PreferRule, ...],
+) -> tuple[tuple[PreferRule, ...], list[dict[str, str]]]:
+    """Keep explicit project knowledge authoritative over inferred pairs."""
+    effective = list(explicit_rules)
+    diagnostics: list[dict[str, str]] = []
+    for inferred in inferred_rules:
+        loser = inferred.losers[0]
+        related = [
+            rule for rule in explicit_rules
+            if rule.winner == inferred.winner
+            or (rule.winner == loser and inferred.winner in rule.losers)
+        ]
+        if related:
+            explicit = related[0]
+            status = "suppressed_by_disabled_explicit" if not explicit.enabled else "superseded_by_explicit"
+            diagnostics.append({
+                "winner": inferred.winner,
+                "loser": loser,
+                "workshop_id": inferred.workshop_id or "",
+                "source": "auto_removed_pair",
+                "status": status,
+                "explicit_winner": explicit.winner,
+            })
+            continue
+        effective.append(inferred)
+        diagnostics.append({
+            "winner": inferred.winner,
+            "loser": loser,
+            "workshop_id": inferred.workshop_id or "",
+            "source": "auto_removed_pair",
+            "status": "active_auto_rule",
+        })
+    return tuple(effective), diagnostics
+
+
 def resolve_mod_rules(
     candidates: list[str], rules: ModRules, manual_blacklist: set[str] | None = None,
     forced: list[str] | None = None, previous_active: set[str] | None = None,
 ) -> tuple[list[str], list[dict[str, Any]], list[dict[str, Any]]]:
     """Resolve project rules in file order; forced IDs are appended afterward."""
     active = list(dict.fromkeys(candidates))
-    available = set(active)
+    # Physical Mod-ID availability comes from resolved Workshop content before
+    # exclusions/preference resolution. It is intentionally not the active set.
+    available_mod_ids = set(active)
     decisions: list[dict[str, Any]] = []
     manual_blacklist = manual_blacklist or set()
     previous_active = previous_active or set()
@@ -418,7 +485,7 @@ def resolve_mod_rules(
         }
         if fallback in manual_blacklist:
             decisions.append({**details, "status": "fallback_blocked_by_admin", "reason": "manual blacklist"})
-        elif fallback not in available:
+        elif fallback not in available_mod_ids:
             decisions.append({**details, "status": "fallback_unavailable", "reason": "not available from resolved Workshop items"})
         elif fallback in active:
             decisions.append({**details, "status": "auto_removed_fallback", "reason": "previously active winner is now disabled"})
@@ -1681,6 +1748,9 @@ def main() -> int:
                 wid,
             )
 
+        discovered_mids = list(dict.fromkeys(
+            description_mids + local_mids + (MOD_ID_OVERRIDES.get(wid) or [])
+        ))
         mids, unresolved_mids = select_workshop_mod_ids(
             description_mids,
             local_mids,
@@ -1798,6 +1868,7 @@ def main() -> int:
             "workshop_id": wid,
             "title": title,
             "mod_ids": valid_mids,
+            "discovered_mod_ids": discovered_mids,
             "map_names": valid_maps,
             "is_map_mod": wid in map_workshop_ids,
             "time_created": d.get("time_created"),
@@ -1847,6 +1918,21 @@ def main() -> int:
             "Muldraugh, KY"
         )
 
+    inferred_prefer_rules = detect_removed_variant_pairs(records)
+    effective_prefer_rules, inferred_rule_diagnostics = reconcile_prefer_rules(
+        rules.prefer,
+        inferred_prefer_rules,
+    )
+    effective_rules = ModRules(rules.always_exclude, effective_prefer_rules, rules.conflict)
+    for item in inferred_rule_diagnostics:
+        pair = f"{item['winner']} -> {item['loser']}"
+        if item["status"] == "active_auto_rule":
+            print(f"[PZ-MODS] Auto-detected Removed variant: {pair} (Workshop {item['workshop_id']})")
+        elif item["status"] == "suppressed_by_disabled_explicit":
+            print(f"[PZ-MODS] Auto-detected {pair} ignored by disabled explicit rule")
+        else:
+            print(f"[PZ-MODS] Auto-detected {pair}; using explicit project rule")
+
     previous_active_mods = read_last_active_mods(
         state_file(SCRIPT_DIR),
         lambda message: print(f"WARNING: [PZ-MODS] {message}", file=sys.stderr),
@@ -1854,7 +1940,7 @@ def main() -> int:
     collection_mod_ids = list(mod_ids)
     mod_ids, mod_rule_decisions, conflicts = resolve_mod_rules(
         mod_ids,
-        rules,
+        effective_rules,
         ADMIN_MOD_BLACKLIST,
         ADMIN_MOD_FORCED,
         set(previous_active_mods),
@@ -1941,6 +2027,19 @@ def main() -> int:
         "mod_ids": mod_ids,
         "mod_load_order_adjustments": load_order_adjustments,
         "previous_successful_active_mods": previous_active_mods,
+        "effective_prefer_rules": [
+            {
+                "winner": rule.winner,
+                "losers": list(rule.losers),
+                "source": rule.source,
+                "workshop_id": rule.workshop_id,
+                "removed_fallback": rule.removed_fallback,
+                "reason": rule.reason,
+                "enabled": rule.enabled,
+            }
+            for rule in effective_prefer_rules
+        ],
+        "inferred_removed_variant_pairs": inferred_rule_diagnostics,
         "mod_rule_decisions": mod_rule_decisions,
         "workshop_decisions": workshop_decisions,
         "conflicts": conflicts,
@@ -2122,6 +2221,24 @@ def main() -> int:
             )
             for decision in mod_rule_decisions
             if decision["status"] == "excluded" and decision["reason"] != "manual blacklist"
+        ],
+    )
+
+    section(
+        "AUTO-DETECTED REMOVED VARIANTS",
+        [
+            (
+                f"Workshop {item['workshop_id']}\n{item['winner']}\n"
+                f"  preferred over: {item['loser']}\n"
+                + (
+                    "  source: exact X/XRemoved pair in the same Workshop item"
+                    if item["status"] == "active_auto_rule"
+                    else "  explicit project rule applied instead"
+                    if item["status"] == "superseded_by_explicit"
+                    else "  ignored by disabled explicit project rule"
+                )
+            )
+            for item in inferred_rule_diagnostics
         ],
     )
 
