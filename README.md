@@ -76,8 +76,8 @@ podman-compose up -d
 
 Collection order supplies the normal stable base order. Verified framework and
 dependency exceptions are encoded as hard Mod ID rules in `MOD_LOAD_FIRST`,
-`MOD_LOAD_BEFORE`, and `MOD_LOAD_AFTER`; diagnostic and final override mods use
-the ordered `MOD_LOAD_LAST` group. These rules affect `PZ_MOD_NAMES`/`Mods=`
+`MOD_LOAD_BEFORE`, and `MOD_LOAD_AFTER`; VRO and diagnostic/final override mods
+use the ordered `MOD_LOAD_LAST` group. These rules affect `PZ_MOD_NAMES`/`Mods=`
 only; `PZ_MOD_IDS` remains the normal unique Workshop ID list used by the update
 checker. `PZ_LASTTOLOAD_COLLECTION_ID` is no longer supported.
 

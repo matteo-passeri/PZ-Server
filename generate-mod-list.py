@@ -140,6 +140,9 @@ MOD_LOAD_AFTER = [
     ("MarzVanillaGuns", "HBVCEFb42"),
 ]
 MOD_LOAD_LAST = (
+    "VehicleRepairOverhaul",
+    "VehicleSalvageOverhaulB42",
+    "VRONearbyContainers",
     "ChuckleberryFinnAlertSystem",
     "errorMagnifier",
     "Linux_Animsets_Marz_Mods",

@@ -131,6 +131,35 @@ def test_generator_parses_mod_info_and_orders_hard_rules(tmp_path):
         generator.reorder_mod_ids(["a", "b"], [("a", "b"), ("b", "a")], [], (), ())
 
 
+def test_default_vro_policy_places_the_vro_stack_before_final_overrides():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    active_mod_ids = [
+        "VehicleModA",
+        "VehicleSalvageOverhaulB42",
+        "ChuckleberryFinnAlertSystem",
+        "VehicleRepairOverhaul",
+        "VehicleModB",
+        "Linux_Animsets_Marz_Mods",
+        "VRONearbyContainers",
+        "errorMagnifier",
+    ]
+
+    assert (
+        "VehicleRepairOverhaul", "VehicleSalvageOverhaulB42"
+    ) in generator.MOD_LOAD_BEFORE
+    assert ("VehicleRepairOverhaul", "VRONearbyContainers") in generator.MOD_LOAD_BEFORE
+    assert generator.reorder_mod_ids(active_mod_ids) == [
+        "VehicleModA",
+        "VehicleModB",
+        "VehicleRepairOverhaul",
+        "VehicleSalvageOverhaulB42",
+        "VRONearbyContainers",
+        "ChuckleberryFinnAlertSystem",
+        "errorMagnifier",
+        "Linux_Animsets_Marz_Mods",
+    ]
+
+
 def test_mod_info_runtime_rules_validate_dependencies_conflicts_and_order():
     generator = load_path_module(ROOT / "generate-mod-list.py")
     metadata = [{
