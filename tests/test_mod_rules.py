@@ -81,6 +81,26 @@ def test_multi_mod_workshop_keeps_other_active_mod_and_forced_ids_are_explicit()
     assert decisions[-1] == {"mod_id": "Forced", "status": "included", "reason": "manual forced"}
 
 
+def test_always_exclude_resolves_neat_building_multi_mod_item():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    discovered = [
+        "Neat_Building",
+        "Neat_Building_Buildables_SESCompat",
+        "Neat_Building_Railings",
+        "Neat_Building_UIOnly",
+    ]
+    rules_file = generator.load_mod_rules(ROOT / "mod-rules.toml")
+
+    selected, unresolved = generator.select_workshop_mod_ids(
+        discovered, [], None, set(rules_file.always_exclude),
+    )
+
+    assert selected == ["Neat_Building"]
+    assert unresolved == []
+    active, _decisions, _conflicts = generator.resolve_mod_rules(selected, rules_file)
+    assert active == ["Neat_Building"]
+
+
 def test_contradictory_administrator_overrides_are_reported(tmp_path, capsys):
     generator = load_path_module(ROOT / "generate-mod-list.py")
     env = tmp_path / ".env"

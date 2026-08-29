@@ -247,6 +247,11 @@ assets, dependencies, and incomplete metadata. Only an explicit administrator
 Workshop blacklist removes a Workshop item. The generator is the authoritative
 resolver; the container entrypoint consumes its generated lists unchanged.
 
+For a multi-Mod-ID Workshop item with no item-specific selection rule,
+`mods.always_exclude` can resolve the item when it leaves exactly one viable
+Mod ID. If two or more viable IDs remain, the item stays unresolved rather than
+choosing one arbitrarily.
+
 Run local patches after Workshop content downloads:
 
 ```bash

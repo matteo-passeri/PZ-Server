@@ -1446,23 +1446,30 @@ def select_workshop_mod_ids(
     description_mod_ids: list[str],
     local_mod_ids: list[str],
     override_mod_ids: list[str] | None,
-    blacklisted_mod_ids: set[str] | None = None,
+    always_excluded_mod_ids: set[str] | None = None,
 ) -> tuple[list[str], list[str]]:
-    """Select automatic IDs, returning unresolved multi-mod IDs separately."""
-    blacklisted_mod_ids = blacklisted_mod_ids or set()
-    if override_mod_ids is not None:
-        return [
-            mod_id
-            for mod_id in override_mod_ids
-            if mod_id not in blacklisted_mod_ids
-        ], []
+    """Select automatic IDs, returning unresolved multi-mod IDs separately.
 
-    discovered = [
-        mod_id
-        for mod_id in dict.fromkeys(description_mod_ids + local_mod_ids)
-        if mod_id not in blacklisted_mod_ids
-    ]
+    Project-wide exclusions can resolve an otherwise ambiguous Workshop item
+    when they leave precisely one viable Mod ID. They are still applied by
+    ``resolve_mod_rules`` later; this only lets that surviving ID reach it.
+    """
+    always_excluded_mod_ids = always_excluded_mod_ids or set()
+    if override_mod_ids is not None:
+        return list(override_mod_ids), []
+
+    discovered = list(dict.fromkeys(description_mod_ids + local_mod_ids))
     if len(discovered) > 1:
+        viable = [
+            mod_id for mod_id in discovered
+            if mod_id not in always_excluded_mod_ids
+        ]
+        if len(viable) == 1:
+            return viable, []
+        if not viable:
+            # Preserve these IDs for the rule phase so exclusion diagnostics
+            # remain accurate. The Workshop item itself is retained.
+            return discovered, []
         return [], discovered
 
     return discovered, []
@@ -2063,6 +2070,7 @@ def main() -> int:
             description_mids,
             local_mids,
             MOD_ID_OVERRIDES.get(wid),
+            set(rules.always_exclude),
         )
 
         if wid in MOD_ID_OVERRIDES:
