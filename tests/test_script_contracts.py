@@ -24,9 +24,7 @@ PATH_MODULES = (
     "fix-scripts/30-damnlib-vehicle-template-compat.py",
     "fix-scripts/31-ki5-vehicle-template-compat.py",
     "fix-scripts/32-vehicle-b42-regression-fixes.py",
-    "fix-scripts/30-vro-nearby-containers.py",
     "fix-scripts/40-radarchery-bob-glb-channels.py",
-    "fix-scripts/50-vro-material-list-order.py",
     "fix-scripts/60-door-unlock-from-inside-force-locked-v2.py",
     "fix-scripts/_vehicle_compat.py",
 )
