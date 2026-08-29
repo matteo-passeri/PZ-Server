@@ -395,6 +395,29 @@ def select(generator, records, selection_rules, blacklist=(), forced=(), previou
     )
 
 
+def final_mod_names(generator, records, blacklist=(), project_rules=None):
+    """Exercise selection through the final value written to PZ_MOD_NAMES."""
+    blacklist = set(blacklist)
+    selected, _decisions, _pairs, _replacements = select(
+        generator, records, {}, blacklist=blacklist,
+    )
+    inferred = generator.detect_removed_variant_pairs(records)
+    explicit = () if project_rules is None else project_rules.prefer
+    effective, _diagnostics = generator.reconcile_prefer_rules(explicit, inferred)
+    rules_file = project_rules or rules(generator)
+    resolved, _decisions, _conflicts = generator.resolve_mod_rules(
+        selected,
+        generator.ModRules(rules_file.always_exclude, effective, rules_file.conflict),
+        blacklist,
+        available_mod_ids={
+            mod_id
+            for record in records
+            for mod_id in record["discovered_mod_ids"]
+        },
+    )
+    return ";".join(generator.reorder_mod_ids(resolved))
+
+
 def test_selection_auto_discovers_exact_removed_pairs_without_false_matches():
     generator = load_path_module(ROOT / "generate-mod-list.py")
     pairs = generator.discover_removed_pairs("1", ["Foo", "FooRemoved"])
@@ -412,6 +435,57 @@ def test_selection_auto_discovers_exact_removed_pairs_without_false_matches():
         "2", ["Foo", "FooRemovedExtra", "Foo2", "Foo2RemovedExtra"]
     ) == []
     assert generator.discover_removed_pairs("3", ["Foo2", "FooRemoved"]) == []
+
+
+@pytest.mark.parametrize(("discovered", "blacklist", "expected"), [
+    (["Foo", "FooRemoved"], ["Foo"], "FooRemoved"),
+    (["Foo", "FooRemoved"], ["FooRemoved"], "Foo"),
+    (["Foo", "FooRemoved"], ["Foo", "FooRemoved"], ""),
+    (["Foo"], ["Foo"], ""),
+])
+def test_blacklisted_removed_pair_reaches_final_mod_names(
+    discovered, blacklist, expected,
+):
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    assert final_mod_names(
+        generator, [selection_record("1", discovered)], blacklist,
+    ) == expected
+
+
+@pytest.mark.parametrize("workshop_id, base_mod_id", [
+    ("3546314080", "Waterpipes"),
+    ("3439305933", "FunctionalGutters"),
+])
+def test_real_removed_variants_reach_final_mod_names_without_forced_mods(
+    workshop_id, base_mod_id,
+):
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    removed_mod_id = base_mod_id + "Removed"
+    names = final_mod_names(
+        generator,
+        [selection_record(workshop_id, [base_mod_id, removed_mod_id])],
+        [base_mod_id],
+        generator.load_mod_rules(ROOT / "mod-rules.toml"),
+    ).split(";")
+    assert removed_mod_id in names
+    assert base_mod_id not in names
+
+
+def test_waterpipes_and_functional_gutters_removed_variants_share_final_mod_names():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    names = final_mod_names(
+        generator,
+        [
+            selection_record("3546314080", ["Waterpipes", "WaterpipesRemoved"]),
+            selection_record("3439305933", ["FunctionalGutters", "FunctionalGuttersRemoved"]),
+        ],
+        ["Waterpipes", "FunctionalGutters"],
+        generator.load_mod_rules(ROOT / "mod-rules.toml"),
+    ).split(";")
+    assert "WaterpipesRemoved" in names
+    assert "FunctionalGuttersRemoved" in names
+    assert "Waterpipes" not in names
+    assert "FunctionalGutters" not in names
 
 
 def test_selection_curated_default_optional_and_exclusive_admin_override():

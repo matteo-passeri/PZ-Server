@@ -146,13 +146,15 @@ and `FooRemoved`, the generator automatically treats `Foo` as preferred over
 affected. IDs split across Workshop items, and names such as `Foo_Removed` or
 `fooRemoved`, are not inferred.
 
-This automatic relationship is a normal `prefer` only. It never creates a
-historical-save fallback. Add an explicit rule with `removed_fallback` when
-the Removed ID is known to preserve an existing save. Explicit TOML rules take
-precedence over inference, including `enabled = false`, which deliberately
-suppresses an otherwise inferred pair. Inferred pairs are reported in generated
-JSON and under `AUTO-DETECTED REMOVED VARIANTS`; they are never written to
-`.env` or `mod-rules.toml`.
+This automatic relationship is a normal `prefer` only and never creates a
+historical-state fallback. However, an administrator blacklist of `Foo`
+selects the discovered same-item `FooRemoved` variant when it is not itself
+blacklisted. Add an explicit rule with `removed_fallback` for transitions based
+on a previously successful server state. Explicit TOML rules take precedence
+over inference, including `enabled = false`, which deliberately suppresses an
+otherwise inferred pair. Inferred pairs are reported in generated JSON and
+under `AUTO-DETECTED REMOVED VARIANTS`; they are never written to `.env` or
+`mod-rules.toml`.
 
 Startup and runtime log audits separately identify WorldDictionary removed-mod
 diagnostics, including `WorldDictionaryException`, missing dictionary scripts,
@@ -226,12 +228,12 @@ multi-Mod-ID behaviour is retained.
 
 Within one Workshop item only, an exact case-sensitive `Foo` / `FooRemoved`
 pair is automatically recognized as mutually exclusive. Normal automatic
-selection retains `Foo` and excludes `FooRemoved`; names such as
+selection retains `Foo` and excludes `FooRemoved`; blacklisting `Foo` instead
+selects `FooRemoved`, while blacklisting both selects neither. Names such as
 `Foo_Removed`, or IDs in different Workshop items, are not inferred. This name
-match does not make `FooRemoved` a historical-save replacement. Activating a
-Removed placeholder after a previous successful `Foo` configuration requires
-an explicit curated `removed_replacements` entry and only happens when that
-base Mod ID is no longer selected.
+match does not create a historical-save fallback: that transition still
+requires an explicit curated `removed_replacements` entry and a previously
+active base Mod ID.
 
 For example, a collection containing `WorkingGutters` and
 `WorkingGuttersRemoved` keeps `WorkingGutters`. With

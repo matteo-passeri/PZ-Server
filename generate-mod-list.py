@@ -1543,6 +1543,30 @@ def discover_removed_pairs(workshop_id: str, mod_ids: list[str]) -> list[dict[st
     ]
 
 
+def reconcile_removed_pair_blacklist(
+    chosen: list[str], pairs: list[dict[str, str]], admin_blacklist: set[str],
+) -> list[str]:
+    """Keep an exact same-item Removed variant active when its base is blacklisted."""
+    reconciled = list(chosen)
+    for pair in pairs:
+        base = pair["base_mod_id"]
+        removed = pair["removed_mod_id"]
+        base_blacklisted = base in admin_blacklist
+        removed_blacklisted = removed in admin_blacklist
+
+        if base_blacklisted and removed_blacklisted:
+            reconciled = [mod_id for mod_id in reconciled if mod_id not in {base, removed}]
+        elif base_blacklisted:
+            reconciled = [mod_id for mod_id in reconciled if mod_id != base]
+            if removed not in reconciled:
+                reconciled.append(removed)
+        elif removed_blacklisted:
+            reconciled = [mod_id for mod_id in reconciled if mod_id != removed]
+            if base not in reconciled:
+                reconciled.append(base)
+    return reconciled
+
+
 def resolve_mod_selection(
     records: list[dict[str, Any]], rules: dict[str, dict[str, Any]],
     admin_blacklist: set[str], admin_forced: list[str], previous_active: set[str],
@@ -1629,6 +1653,7 @@ def resolve_mod_selection(
                     retained = pair_requested[0] if pair_requested else base
                     chosen = [mod_id for mod_id in chosen if mod_id not in {base, removed}]
                     chosen.append(retained)
+            chosen = reconcile_removed_pair_blacklist(chosen, pairs, admin_blacklist)
             decisions.append({"workshop_id": workshop_id, "selected": chosen, "rejected": [m for m in discovered if m not in chosen], "reason": reason})
         elif pairs:
             bases = {pair["base_mod_id"] for pair in pairs}
@@ -1646,11 +1671,20 @@ def resolve_mod_selection(
                     )
             if not chosen and safe and all(mod_id in bases for mod_id in safe) and all(mod_id not in admin_blacklist for mod_id in safe):
                 chosen = safe
-                decisions.append({"workshop_id": workshop_id, "selected": chosen, "rejected": list(removed_ids), "reason": "auto_removed_pair"})
+                reason = "auto_removed_pair"
             elif current:
                 chosen = [mod_id for mod_id in current if mod_id not in removed_ids]
+                reason = "existing_selection"
             else:
                 chosen = []
+                reason = "unresolved_selection"
+            chosen = reconcile_removed_pair_blacklist(chosen, pairs, admin_blacklist)
+            decisions.append({
+                "workshop_id": workshop_id,
+                "selected": chosen,
+                "rejected": [mod_id for mod_id in discovered if mod_id not in chosen],
+                "reason": reason,
+            })
         else:
             chosen = current
 
