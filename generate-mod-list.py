@@ -75,6 +75,7 @@ class ModRules:
 # MOD_LOAD_FIRST and MOD_LOAD_LAST place active IDs at the beginning and end,
 # respectively, in their declared order.
 MOD_LOAD_FIRST = (
+    "TapeContents",
     "damnlib",
     "tsarslib",
     "NeatUI_Framework",
