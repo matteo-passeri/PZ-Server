@@ -81,6 +81,7 @@ MOD_LOAD_FIRST = (
     "NeatUI_Framework",
 )
 MOD_LOAD_BEFORE = [
+    ("BB_CommonSense", "CommonSense_B42Fix"),
     ("HBVCEFb42", "SWMG"),
     ("NeatUI_Framework", "CleanUI"),
     ("NeatUI_Framework", "Neat_Crafting"),
