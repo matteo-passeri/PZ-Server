@@ -1,4 +1,4 @@
-# Project Zomboid Server Scripts
+# Project Zomboid Automated Server
 
 Operational scripts for a Project Zomboid Build 42 dedicated server running
 with Podman Compose. The repository root is the deployment directory: copy the
