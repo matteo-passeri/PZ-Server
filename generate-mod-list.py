@@ -167,7 +167,13 @@ class ModSelectionError(RuntimeError):
 # selection chooses active IDs; Phase 1 orders those active IDs afterward.
 # Add only verified Workshop rules here. Exact X/XRemoved pairs are inferred
 # safely at runtime and therefore do not require an entry.
-MOD_SELECTION_RULES: dict[str, dict[str, Any]] = {}
+MOD_SELECTION_RULES: dict[str, dict[str, Any]] = {
+    "3790880431": {
+        "mod_ids": ["UltimateTowing", "UltimateTowingZB"],
+        "default": ["UltimateTowing"],
+        "exclusive_groups": [["UltimateTowing", "UltimateTowingZB"]],
+    },
+}
 
 
 def normalize_mod_info_order_value(value: str) -> str:

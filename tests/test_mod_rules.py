@@ -395,11 +395,13 @@ def select(generator, records, selection_rules, blacklist=(), forced=(), previou
     )
 
 
-def final_mod_names(generator, records, blacklist=(), project_rules=None):
+def final_mod_names(
+    generator, records, blacklist=(), project_rules=None, selection_rules=None,
+):
     """Exercise selection through the final value written to PZ_MOD_NAMES."""
     blacklist = set(blacklist)
     selected, _decisions, _pairs, _replacements = select(
-        generator, records, {}, blacklist=blacklist,
+        generator, records, selection_rules or {}, blacklist=blacklist,
     )
     inferred = generator.detect_removed_variant_pairs(records)
     explicit = () if project_rules is None else project_rules.prefer
@@ -507,6 +509,41 @@ def test_selection_curated_default_optional_and_exclusive_admin_override():
     with pytest.raises(generator.ModSelectionError, match="Conflicting Mod ID variants"):
         select(generator, records, selection_rules, forced=["Full", "Lite"])
     assert select(generator, records, selection_rules, blacklist=["Full"])[0] == []
+
+
+def test_ultimate_towing_curated_default_and_administrator_overrides():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    workshop_id = "3790880431"
+    discovered = ["UltimateTowing", "UltimateTowingZB"]
+    records = [selection_record(workshop_id, discovered)]
+
+    selected, _decisions, _pairs, _replacements = select(
+        generator, records, generator.MOD_SELECTION_RULES,
+    )
+    workshop_items = ";".join(record["workshop_id"] for record in records)
+    mods = final_mod_names(
+        generator, records, selection_rules=generator.MOD_SELECTION_RULES,
+    )
+    assert selected == ["UltimateTowing"]
+    assert workshop_items.split(";") == [workshop_id]
+    assert mods.split(";") == ["UltimateTowing"]
+    assert "UltimateTowingZB" not in mods.split(";")
+
+    overridden = [selection_record(workshop_id, discovered, explicit=["UltimateTowingZB"])]
+    assert select(
+        generator, overridden, generator.MOD_SELECTION_RULES,
+    )[0] == ["UltimateTowingZB"]
+    assert select(
+        generator, records, generator.MOD_SELECTION_RULES, forced=["UltimateTowingZB"],
+    )[0] == ["UltimateTowingZB"]
+
+    with pytest.raises(generator.ModSelectionError, match="Conflicting Mod ID variants"):
+        select(
+            generator,
+            records,
+            generator.MOD_SELECTION_RULES,
+            forced=["UltimateTowing", "UltimateTowingZB"],
+        )
 
 
 def test_selection_condition_and_curated_removed_transition():

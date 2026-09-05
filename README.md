@@ -226,6 +226,13 @@ two variants in the same curated exclusive group is rejected instead of picking
 one arbitrarily. Without a matching selection rule, existing unresolved
 multi-Mod-ID behaviour is retained.
 
+Workshop `3790880431` (Ultimate Towing) exposes the mutually exclusive
+`UltimateTowing` (Lua) and `UltimateTowingZB` (ZombieBuddy) variants. Automatic
+generation keeps the Workshop item and selects only `UltimateTowing` by
+default. An administrator can explicitly select `UltimateTowingZB` through
+`PZ_MOD_ID_OVERRIDES` or `PZ_MOD_FORCED_MODS`; requesting both variants is
+rejected.
+
 Within one Workshop item only, an exact case-sensitive `Foo` / `FooRemoved`
 pair is automatically recognized as mutually exclusive. Normal automatic
 selection retains `Foo` and excludes `FooRemoved`; blacklisting `Foo` instead
