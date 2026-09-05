@@ -3,10 +3,57 @@ import struct
 
 import pytest
 
-from conftest import FIX_SCRIPTS as FIX_DIR, fix_context, load_path_module
+from conftest import FIX_SCRIPTS as FIX_DIR, ROOT, fix_context, load_path_module
 
 
 FIX_PATHS = tuple(sorted(path for path in FIX_DIR.glob("*.py") if not path.name.startswith("_")))
+
+
+def configured_runner(tmp_path, monkeypatch):
+    runner = load_path_module(ROOT / "apply-local-fixes.py")
+    monkeypatch.setattr(runner, "load_configuration", lambda: None)
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    monkeypatch.setattr(runner, "WORKSHOP", tmp_path / "workshop")
+    monkeypatch.setattr(runner, "LOG_ROOTS", [])
+    monkeypatch.setattr(runner, "ACTIVE_WORKSHOP_IDS", ())
+    monkeypatch.setattr(runner, "STATE_FILE", tmp_path / "state.json")
+    monkeypatch.setattr(runner, "CONTAINER", "test")
+    return runner
+
+
+def test_runner_continues_after_successful_compatibility_skip(tmp_path, monkeypatch):
+    runner = configured_runner(tmp_path, monkeypatch)
+    calls = []
+
+    def skipped(_ctx):
+        calls.append("skipped")
+        return False
+
+    def subsequent(_ctx):
+        calls.append("subsequent")
+        return False
+
+    monkeypatch.setattr(runner, "discover_fix_scripts", lambda: [
+        ("skip", tmp_path / "skip.py", skipped),
+        ("next", tmp_path / "next.py", subsequent),
+    ])
+
+    assert runner.main() == 0
+    assert calls == ["skipped", "subsequent"]
+
+
+def test_runner_keeps_unexpected_fix_exception_fatal(tmp_path, monkeypatch):
+    runner = configured_runner(tmp_path, monkeypatch)
+
+    def broken(_ctx):
+        raise RuntimeError("programming failure")
+
+    monkeypatch.setattr(runner, "discover_fix_scripts", lambda: [
+        ("broken", tmp_path / "broken.py", broken),
+    ])
+
+    with pytest.raises(RuntimeError, match="programming failure"):
+        runner.main()
 
 
 @pytest.mark.parametrize("path", FIX_PATHS, ids=lambda path: path.stem)

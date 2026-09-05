@@ -1,0 +1,639 @@
+diff --git a/common/media/lua/client/DBD_NearbyAnimals.lua b/common/media/lua/client/DBD_NearbyAnimals.lua
+index 5b648a3..44a5ced 100644
+--- a/common/media/lua/client/DBD_NearbyAnimals.lua
++++ b/common/media/lua/client/DBD_NearbyAnimals.lua
+@@ -1,9 +1,25 @@
+ -- DBD_NearbyAnimals
+--- Build 42.13 Compatible Version
++-- Build 42.20 Compatible Version
+ -- Displays nearby animals with their stats in a UI panel
+ 
+ print("[DBD_NearbyAnimals] Loading mod...")
+ 
++-- Lua reloads can otherwise leave callbacks from the previous module table alive.
++local previousNearbyAnimals = DBD_NearbyAnimals
++if previousNearbyAnimals then
++    if previousNearbyAnimals._eventHandlers then
++        for eventName, handler in pairs(previousNearbyAnimals._eventHandlers) do
++            local event = Events[eventName]
++            if event and handler then
++                event:Remove(handler)
++            end
++        end
++    end
++    if previousNearbyAnimals.instance then
++        previousNearbyAnimals.instance:removeFromUIManager()
++    end
++end
++
+ require "ISUI/ISUIElement"
+ require "ISUI/ISButton"
+ require "ISUI/ISContextMenu"
+@@ -33,6 +49,10 @@ local SCROLLBAR_WIDTH = 16  -- Width of the scrollbar
+ local FONT_HGT_SMALL = nil
+ local FONT_HGT_MEDIUM = nil
+ 
++-- Forward declarations allow panel lifecycle methods to persist state.
++local loadSettings
++local saveSettings
++
+ -- Function to initialize font heights
+ local function initFontHeights()
+     if not FONT_HGT_SMALL then
+@@ -48,6 +68,32 @@ local function round(num, decimals)
+     return math.floor(num * mult + 0.5) / mult
+ end
+ 
++local function isFiniteNumber(value)
++    return type(value) == "number" and value == value and value ~= math.huge and value ~= -math.huge
++end
++
++local function isUsableAnimal(animal)
++    if not animal or not instanceof(animal, "IsoAnimal") then
++        return false
++    end
++
++    local success, exists = pcall(function()
++        return animal:isExistInTheWorld() or animal:getHutch() or animal:getVehicle()
++    end)
++    return success and exists and true or false
++end
++
++local function isLiveAnimal(animal)
++    if not isUsableAnimal(animal) then
++        return false
++    end
++
++    local success, health = pcall(function()
++        return animal:getHealth()
++    end)
++    return success and type(health) == "number" and health > 0
++end
++
+ -- Function to find nearby animals
+ local function findNearbyAnimals(player, range)
+     local nearbyAnimals = {}
+@@ -67,16 +113,13 @@ local function findNearbyAnimals(player, range)
+     local rangeSq = range * range
+     
+     local function addAnimalIfNew(animal)
+-        if not animal then return end
++        if not isLiveAnimal(animal) then return end
+         
+         -- Optimize: use hash table for O(1) duplicate check instead of O(n) linear search
+         if addedAnimals[animal] then
+             return
+         end
+         
+-        -- Quick health check (optimize: check before expensive operations)
+-        if animal:getHealth() <= 0 then return end
+-        
+         addedAnimals[animal] = true
+         
+         -- Check distance - animals can be in world, hutches, or vehicles
+@@ -145,93 +188,83 @@ end
+ 
+ -- Function to get animal stats
+ local function getAnimalStats(animal)
+-    if not animal then return nil end
+-    
+-    -- Cache animal type to avoid multiple calls
+-    local animalType = animal:getAnimalType()
+-    
+-    local stats = {
+-        name = animal:getFullName() or getText("IGUI_AnimalType_" .. animalType),
+-        type = animalType,
+-        health = 0,
+-        hunger = 0,
+-        thirst = 0,
+-        stress = 0,
+-        isFemale = animal:isFemale(),
+-        isBaby = animal:isBaby(),
+-        isPettedRecently = nil,  -- nil = can't be petted, true = petted recently, false = not petted recently
+-        age = nil  -- Age in days
+-    }
+-    
+-    -- Check if animal was petted recently (canBePet checks if it can be petted, petTimerDone checks if timer is done)
+-    local success, canBePet = pcall(function() 
+-        if animal.canBePet then
+-            return animal:canBePet()
++    if not isLiveAnimal(animal) then return nil end
++
++    local success, stats = pcall(function()
++        local animalType = animal:getAnimalType()
++        local result = {
++            name = animal:getFullName() or getText("IGUI_AnimalType_" .. animalType),
++            type = animalType,
++            health = 0,
++            hunger = 0,
++            thirst = 0,
++            stress = 0,
++            isFemale = animal:isFemale(),
++            isBaby = animal:isBaby(),
++            isPettedRecently = nil,
++            age = nil
++        }
++
++        -- The UI historically means "petted during the active pet cooldown".
++        -- canBePet becomes false during that cooldown in current builds, so it
++        -- cannot be used as a prerequisite for this public timer API.
++        if animal.petTimerDone then
++            local timerDone = animal:petTimerDone()
++            if type(timerDone) == "boolean" then
++                result.isPettedRecently = not timerDone
++            end
+         end
+-        return false
+-    end)
+-    if success and canBePet then
+-        local timerDoneSuccess, timerDone = pcall(function()
+-            if animal.petTimerDone then
+-                return animal:petTimerDone()
++
++        local health = animal:getHealth()
++        if type(health) == "number" then
++            result.health = math.max(0, math.min(100, health * 100))
++        end
++
++        if animal.getHunger then
++            local hunger = animal:getHunger()
++            if type(hunger) == "number" then
++                result.hunger = math.max(0, math.min(100, hunger * 100))
++            end
++        else
++            local data = animal:getData()
++            if data and data.getHunger then
++                local hunger = data:getHunger()
++                if type(hunger) == "number" then
++                    result.hunger = math.max(0, math.min(100, hunger * 100))
++                end
+             end
+-            return true  -- If method doesn't exist, assume timer is done (can be petted)
+-        end)
+-        if timerDoneSuccess then
+-            -- If timer is NOT done, animal was petted recently (within last 24 hours)
+-            -- If timer IS done, animal can be petted (hasn't been petted recently)
+-            stats.isPettedRecently = not timerDone
+         end
+-    end
+-    -- If canBePet is false or failed, isPettedRecently remains nil (don't show icon)
+-    
+-    -- Get health (optimize: remove pcall for standard method)
+-    local health = animal:getHealth()
+-    if health then
+-        stats.health = math.max(0, math.min(100, health * 100))
+-    end
+-    
+-    -- Get hunger (optimize: try direct method first, fallback only if needed)
+-    if animal.getHunger then
+-        local hunger = animal:getHunger()
+-        if hunger then
+-            stats.hunger = math.max(0, math.min(100, hunger * 100))
++
++        local thirst = animal:getThirst()
++        if type(thirst) == "number" then
++            result.thirst = math.max(0, math.min(100, thirst * 100))
+         end
+-    else
+-        -- Fallback to data only if direct method doesn't exist
+-        local data = animal:getData()
+-        if data and data.getHunger then
+-            local hunger = data:getHunger()
+-            if hunger then
+-                stats.hunger = math.max(0, math.min(100, hunger * 100))
++
++        -- getStress remains a 0-100 value in B42, unlike the other bars.
++        local stress = animal:getStress()
++        if type(stress) == "number" then
++            result.stress = math.max(0, math.min(100, stress))
++        end
++
++        if animal.getAge then
++            local age = animal:getAge()
++            if type(age) == "number" then
++                result.age = math.floor(age)
+             end
+         end
++
++        return result
++    end)
++
++    if success then
++        return stats
+     end
+-    
+-    -- Get thirst (optimize: remove pcall for standard method)
+-    local thirst = animal:getThirst()
+-    if thirst then
+-        stats.thirst = math.max(0, math.min(100, thirst * 100))
+-    end
+-    
+-    -- Get stress (getStress returns 0-100 already, unlike health/hunger/thirst which return 0-1)
+-    local stress = animal:getStress()
+-    if stress then
+-        stats.stress = math.max(0, math.min(100, stress))
+-    end
+-    
+-    -- Get age (optimized: use animal:getAge() which is the working method)
+-    -- Remove pcall since we know the method exists and works
+-    if animal.getAge then
+-        stats.age = math.floor(animal:getAge())
+-    end
+-    
+-    return stats
++    return nil
+ end
+ 
+ -- Function to get animal icon texture (optimized: use animal:getInventoryIconTexture() which is the working method)
+ local function getAnimalIcon(animal)
+-    if not animal then return nil end
++    if not isLiveAnimal(animal) then return nil end
+     
+     -- Use the same method as the game's context menu - this is the reliable method
+     if animal.getInventoryIconTexture then
+@@ -290,6 +323,9 @@ function DBD_NearbyAnimals:setVisible(visible)
+         -- Clear highlight when panel is hidden
+         self:clearHighlight()
+     end
++    if not self.suppressStateSave and saveSettings then
++        saveSettings()
++    end
+ end
+ 
+ function DBD_NearbyAnimals:removeFromUIManager()
+@@ -342,7 +378,7 @@ function DBD_NearbyAnimals:prerender()
+         
+         if stillNearby then
+             -- Optimize: only check validity if still nearby
+-            local animalValid = self.highlightedAnimal:isExistInTheWorld() or self.highlightedAnimal:getHutch() or self.highlightedAnimal:getVehicle()
++            local animalValid = isLiveAnimal(self.highlightedAnimal)
+             if animalValid then
+                 -- Refresh highlight every frame (same as context menu does)
+                 local playerNum = player:getPlayerNum()
+@@ -412,6 +448,12 @@ function DBD_NearbyAnimals:render()
+     
+     local player = getSpecificPlayer(0)
+     if not player then return end
++
++    local playerSquare = player:getCurrentSquare()
++    if playerSquare ~= self.lastPlayerSquare then
++        self.lastPlayerSquare = playerSquare
++        self.updateCounter = UPDATE_INTERVAL
++    end
+     
+     -- Update animal list periodically (only when visible)
+     self.updateCounter = (self.updateCounter or 0) + 1
+@@ -443,13 +485,10 @@ function DBD_NearbyAnimals:render()
+         totalContentHeight = FONT_HGT_SMALL + PADDING
+     else
+         for i, animal in ipairs(self.nearbyAnimals) do
+-            if animal and animal:getHealth() > 0 then
+-                local stillExists = animal:isExistInTheWorld() or animal:getHutch() or animal:getVehicle()
+-                if stillExists then
++            if isLiveAnimal(animal) then
+                     local estimatedHeight = (FONT_HGT_SMALL + STAT_SPACING) + (STAT_BAR_HEIGHT + STAT_SPACING) * 4 + 10
+                     local entryHeight = math.max(ROW_HEIGHT, estimatedHeight)
+                     totalContentHeight = totalContentHeight + entryHeight + PADDING
+-                end
+             end
+         end
+     end
+@@ -490,10 +529,7 @@ function DBD_NearbyAnimals:render()
+     else
+         for i, animal in ipairs(self.nearbyAnimals) do
+             -- Skip invalid animals
+-            if animal and animal:getHealth() > 0 then
+-                -- Check if animal still exists (in world, hutch, or vehicle)
+-                local stillExists = animal:isExistInTheWorld() or animal:getHutch() or animal:getVehicle()
+-                if stillExists then
++            if isLiveAnimal(animal) then
+                     local stats = getAnimalStats(animal)
+                     if stats then
+                         -- Calculate entry height first (estimate based on content)
+@@ -717,7 +753,6 @@ function DBD_NearbyAnimals:render()
+                         
+                         currentY = currentY + entryHeight + PADDING
+                     end
+-                end
+             end
+         end
+     end
+@@ -793,13 +828,10 @@ function DBD_NearbyAnimals:onMouseMove(dx, dy)
+         local totalContentHeight = 0
+         if #self.nearbyAnimals > 0 then
+             for i, animal in ipairs(self.nearbyAnimals) do
+-                if animal and animal:getHealth() > 0 then
+-                    local stillExists = animal:isExistInTheWorld() or animal:getHutch() or animal:getVehicle()
+-                    if stillExists then
++                if isLiveAnimal(animal) then
+                         local estimatedHeight = (FONT_HGT_SMALL + STAT_SPACING) + (STAT_BAR_HEIGHT + STAT_SPACING) * 4 + 10
+                         local entryHeight = math.max(ROW_HEIGHT, estimatedHeight)
+                         totalContentHeight = totalContentHeight + entryHeight + PADDING
+-                    end
+                 end
+             end
+         end
+@@ -879,13 +911,10 @@ function DBD_NearbyAnimals:onMouseDown(x, y)
+     local totalContentHeight = 0
+     if #self.nearbyAnimals > 0 then
+         for i, animal in ipairs(self.nearbyAnimals) do
+-            if animal and animal:getHealth() > 0 then
+-                local stillExists = animal:isExistInTheWorld() or animal:getHutch() or animal:getVehicle()
+-                if stillExists then
++            if isLiveAnimal(animal) then
+                     local estimatedHeight = (FONT_HGT_SMALL + STAT_SPACING) + (STAT_BAR_HEIGHT + STAT_SPACING) * 4 + 10
+                     local entryHeight = math.max(ROW_HEIGHT, estimatedHeight)
+                     totalContentHeight = totalContentHeight + entryHeight + PADDING
+-                end
+             end
+         end
+     end
+@@ -924,13 +953,13 @@ function DBD_NearbyAnimals:onMouseDown(x, y)
+                y >= entryScreenY and y <= entryScreenBottom then
+                 -- Found clicked animal entry, highlight the animal
+                 local animal = entryBounds.animal
+-                if animal then
++                if isLiveAnimal(animal) then
+                     local player = getSpecificPlayer(0)
+                     if player then
+                         -- Verify animal is an IsoAnimal and still exists
+                         local animalValid = false
+                         if instanceof(animal, "IsoAnimal") then
+-                            animalValid = animal:isExistInTheWorld() or animal:getHutch() or animal:getVehicle()
++                            animalValid = isLiveAnimal(animal)
+                         end
+                         
+                         if animalValid then
+@@ -1063,6 +1092,7 @@ function DBD_NearbyAnimals:onMouseUp(x, y)
+         self.scrolling = false
+         self.scrollStartY = nil
+         self.scrollStartScrollY = nil
++        saveSettings()
+         return true
+     end
+     
+@@ -1072,11 +1102,13 @@ function DBD_NearbyAnimals:onMouseUp(x, y)
+         self.resizeStartHeight = nil
+         self.resizeDeltaX = nil
+         self.resizeDeltaY = nil
++        saveSettings()
+         return true
+     end
+     
+     if self.dragging then
+         self.dragging = false
++        saveSettings()
+         return true
+     end
+     
+@@ -1102,7 +1134,9 @@ function DBD_NearbyAnimals:onMouseUpOutside(x, y)
+     if self.dragging then
+         self.dragging = false
+     end
+-    
++
++    saveSettings()
++
+     return true
+ end
+ 
+@@ -1125,7 +1159,7 @@ function DBD_NearbyAnimals:onRightMouseUp(x, y)
+                y >= entryScreenY and y <= entryScreenBottom then
+                 -- Found clicked animal entry, show context menu for this animal
+                 local animal = entryBounds.animal
+-                if animal then
++                if isLiveAnimal(animal) then
+                     -- Try to get the player
+                     local player = getSpecificPlayer(0)
+                     if player then
+@@ -1221,13 +1255,10 @@ function DBD_NearbyAnimals:onMouseWheel(del)
+         totalContentHeight = FONT_HGT_SMALL + PADDING
+     else
+         for i, animal in ipairs(self.nearbyAnimals) do
+-            if animal and animal:getHealth() > 0 then
+-                local stillExists = animal:isExistInTheWorld() or animal:getHutch() or animal:getVehicle()
+-                if stillExists then
++            if isLiveAnimal(animal) then
+                     local estimatedHeight = (FONT_HGT_SMALL + STAT_SPACING) + (STAT_BAR_HEIGHT + STAT_SPACING) * 4 + 10
+                     local entryHeight = math.max(ROW_HEIGHT, estimatedHeight)
+                     totalContentHeight = totalContentHeight + entryHeight + PADDING
+-                end
+             end
+         end
+     end
+@@ -1247,11 +1278,9 @@ end
+ 
+ -- Settings system for configurable hotkey
+ local Settings = {}
+-Settings.hotkey = Keyboard.KEY_T  -- Default: T key
+-Settings.requireShift = false  -- Default: single key (no Shift required)
+ 
+ -- Load settings from ModData
+-local function loadSettings()
++loadSettings = function()
+     -- Ensure Settings table exists
+     if not Settings then
+         Settings = {}
+@@ -1294,7 +1323,7 @@ local function loadSettings()
+ end
+ 
+ -- Save settings to ModData
+-local function saveSettings()
++saveSettings = function()
+     -- Ensure Settings exists
+     if not Settings then
+         Settings = {}
+@@ -1315,6 +1344,15 @@ local function saveSettings()
+     local settings = modData.DBD_NearbyAnimals
+     settings.hotkey = Settings.hotkey or Keyboard.KEY_T
+     settings.requireShift = Settings.requireShift ~= nil and Settings.requireShift or false
++
++    local panel = DBD_NearbyAnimals.instance
++    if panel then
++        settings.visible = panel:isVisible() and true or false
++        settings.x = panel:getX()
++        settings.y = panel:getY()
++        settings.width = panel:getWidth()
++        settings.height = panel:getHeight()
++    end
+     
+     -- In multiplayer, transmit ModData changes to server
+     if isClient() then
+@@ -1665,59 +1703,94 @@ end
+ 
+ -- Initialize the mod
+ local initAttempts = 0
++local initTickHandler
++
++local function clamp(value, minimum, maximum)
++    return math.max(minimum, math.min(maximum, value))
++end
++
++local function getSavedPanelLayout()
++    local screenWidth = getCore():getScreenWidth()
++    local screenHeight = getCore():getScreenHeight()
++    local player = getSpecificPlayer(0)
++    local saved = player and player:getModData() and player:getModData().DBD_NearbyAnimals or nil
++    local width = DEFAULT_WIDTH
++    local height = DEFAULT_HEIGHT
++
++    if saved and isFiniteNumber(saved.width) then
++        width = math.max(MIN_WIDTH, saved.width)
++    end
++    if saved and isFiniteNumber(saved.height) then
++        height = math.max(MIN_HEIGHT, saved.height)
++    end
++    width = clamp(width, MIN_WIDTH, math.max(MIN_WIDTH, screenWidth - 10))
++    height = clamp(height, MIN_HEIGHT, math.max(MIN_HEIGHT, screenHeight - 10))
++
++    local defaultX = screenWidth - width - 20
++    local defaultY = 100
++    local x = saved and saved.x or defaultX
++    local y = saved and saved.y or defaultY
++    if not isFiniteNumber(x) or not isFiniteNumber(y) or x + width < 0 or y + height < 0 or x > screenWidth or y > screenHeight then
++        x = defaultX
++        y = defaultY
++    end
++    x = clamp(x, 0, math.max(0, screenWidth - width))
++    y = clamp(y, 0, math.max(0, screenHeight - height))
++
++    return x, y, width, height, saved and saved.visible == true or false
++end
++
+ local function initDBD_NearbyAnimals()
+-    initAttempts = initAttempts + 1
+-    
+     local player = getSpecificPlayer(0)
+     if not player then
+-        if initAttempts < 20 then
+-            return
+-        end
++        return false
+     end
+-    
++
++    initAttempts = 0
++    loadSettings()
+     if DBD_NearbyAnimals.instance then
+         DBD_NearbyAnimals.instance:removeFromUIManager()
+     end
+-    
+-    -- Position in top-right corner
+-    local screenWidth = getCore():getScreenWidth()
+-    local startX = screenWidth - DEFAULT_WIDTH - 20
+-    local startY = 100
+-    
++
++    local startX, startY, width, height, visible = getSavedPanelLayout()
+     DBD_NearbyAnimals.instance = DBD_NearbyAnimals:new(startX, startY)
+     DBD_NearbyAnimals.instance:initialise()
++    DBD_NearbyAnimals.instance:setWidth(width)
++    DBD_NearbyAnimals.instance:setHeight(height)
+     DBD_NearbyAnimals.instance:addToUIManager()
+-    DBD_NearbyAnimals.instance:setVisible(true)
+-    
+-    -- Load settings after initialization
+-    loadSettings()
++    DBD_NearbyAnimals.instance.suppressStateSave = true
++    DBD_NearbyAnimals.instance:setVisible(visible)
++    DBD_NearbyAnimals.instance.suppressStateSave = false
++    if visible then
++        DBD_NearbyAnimals.instance.updateCounter = UPDATE_INTERVAL
++    end
+     
+     print("[DBD_NearbyAnimals] Initialized")
++    return true
+ end
+ 
+--- Hook into game start
+-Events.OnGameStart.Add(initDBD_NearbyAnimals)
+-
+--- Also try on every tick until we succeed (for multiplayer)
+-local initTickHandler = nil
+ initTickHandler = function()
+     if DBD_NearbyAnimals.instance then
+-        -- Already initialized, remove this handler
+         Events.OnTick.Remove(initTickHandler)
+         return
+     end
+-    
+-    local player = getSpecificPlayer(0)
+-    if player then
+-        -- Player is ready, try to initialize
+-        initDBD_NearbyAnimals()
+-        if DBD_NearbyAnimals.instance then
+-            -- Success, remove handler
+-            Events.OnTick.Remove(initTickHandler)
+-        end
++    initAttempts = initAttempts + 1
++    if initDBD_NearbyAnimals() or initAttempts >= 20 then
++        Events.OnTick.Remove(initTickHandler)
++    end
++end
++
++local function ensureInitTickHandler()
++    Events.OnTick.Remove(initTickHandler)
++    Events.OnTick.Add(initTickHandler)
++end
++
++local function onGameStart()
++    initAttempts = 0
++    if not initDBD_NearbyAnimals() then
++        ensureInitTickHandler()
+     end
+ end
+-Events.OnTick.Add(initTickHandler)
+ 
+ -- Toggle function for showing/hiding the Nearby Animals panel
+ local function toggleNearbyAnimalsPanel()
+@@ -1739,6 +1812,7 @@ local function toggleNearbyAnimalsPanel()
+             animalsInstance:addToUIManager()
+         end
+         animalsInstance:setVisible(true)
++        animalsInstance.updateCounter = UPDATE_INTERVAL
+     else
+         -- Panel is visible, hide it
+         animalsInstance:setVisible(false)
+@@ -1816,26 +1890,22 @@ local keyPressHandler = function(key)
+     end
+ end
+ 
+-Events.OnKeyPressed.Add(keyPressHandler)
+-
+--- Load settings when player is created
+-Events.OnCreatePlayer.Add(function(playerNum)
++local function onCreatePlayer(playerNum)
+     if playerNum == 0 then
+-        -- Wait a bit for player data to be ready
+-        local attempts = 0
+-        local loadSettingsHandler = function()
+-            attempts = attempts + 1
+-            if attempts > 20 then
+-                Events.OnTick.Remove(loadSettingsHandler)
+-                return
+-            end
+-            
+-            local player = getSpecificPlayer(0)
+-            if player then
+-                loadSettings()
+-                Events.OnTick.Remove(loadSettingsHandler)
+-            end
++        loadSettings()
++        if not DBD_NearbyAnimals.instance then
++            ensureInitTickHandler()
+         end
+-        Events.OnTick.Add(loadSettingsHandler)
+     end
+-end)
++end
++
++DBD_NearbyAnimals._eventHandlers = {
++    OnGameStart = onGameStart,
++    OnTick = initTickHandler,
++    OnKeyPressed = keyPressHandler,
++    OnCreatePlayer = onCreatePlayer
++}
++Events.OnGameStart.Add(onGameStart)
++Events.OnKeyPressed.Add(keyPressHandler)
++Events.OnCreatePlayer.Add(onCreatePlayer)
++ensureInitTickHandler()

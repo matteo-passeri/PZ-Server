@@ -11,8 +11,10 @@ MOD_ROOT = Path("mods/MoreDamagedObjects")
 LUA_RELATIVE = Path("42.20/media/lua/shared/MDO_Utils.lua")
 TILE_RELATIVE = Path("common/media/ct_new_vanilla_def.tiles.txt")
 LUA_FUNCTION = "MDO_Utils.addObjectToSquare"
-CLIENT_TRANSMIT = "newObj:transmitCompleteItemToClients()"
 SERVER_TRANSMIT = "newObj:transmitCompleteItemToServer()"
+CLIENT_TRANSMIT = "newObj:transmitCompleteItemToClients()"
+BROKEN_TRANSMIT = SERVER_TRANSMIT
+FIXED_TRANSMIT = CLIENT_TRANSMIT
 LADDER_PROPERTIES = {
     "carpentry_02_84": "ladderW",
     "carpentry_02_85": "ladderN",
@@ -55,8 +57,9 @@ def rewrite_atomically(path, text):
 def function_region(text):
     """Return the named function through the next top-level function declaration."""
     header = re.compile(
-        r"(?m)^function[ \t]+MDO_Utils\.addObjectToSquare"
-        r"\([ \t]*square[ \t]*,[ \t]*spriteName[ \t]*\)[ \t]*$"
+        r"(?m)^[ \t]*function[ \t]+MDO_Utils\.addObjectToSquare[ \t]*"
+        r"\([ \t]*square[ \t]*,[ \t]*spriteName[ \t]*\)"
+        r"[ \t]*(?:--[^\r\n]*)?$"
     )
     matches = list(header.finditer(text))
     if len(matches) != 1:
@@ -64,7 +67,7 @@ def function_region(text):
             f"expected exactly one function {LUA_FUNCTION}; found {len(matches)}"
         )
     start = matches[0].start()
-    next_function = re.search(r"(?m)^function[ \t]+", text[matches[0].end():])
+    next_function = re.search(r"(?m)^[ \t]*function[ \t]+", text[matches[0].end():])
     end = matches[0].end() + next_function.start() if next_function else len(text)
     return start, end
 
@@ -72,18 +75,19 @@ def function_region(text):
 def plan_lua_fix(text):
     """Return replacement text and status for the world-object sync repair."""
     start, end = function_region(text)
-    client_count = text.count(CLIENT_TRANSMIT)
-    server_count = text.count(SERVER_TRANSMIT)
     region = text[start:end]
+    broken_count = region.count(BROKEN_TRANSMIT)
+    fixed_count = region.count(FIXED_TRANSMIT)
 
-    if client_count == 1 and server_count == 0 and CLIENT_TRANSMIT in region:
-        return text.replace(CLIENT_TRANSMIT, SERVER_TRANSMIT, 1), "APPLIED"
-    if client_count == 0 and server_count == 1 and SERVER_TRANSMIT in region:
+    if broken_count == 1 and fixed_count == 0:
+        updated_region = region.replace(BROKEN_TRANSMIT, FIXED_TRANSMIT, 1)
+        return text[:start] + updated_region + text[end:], "APPLIED"
+    if broken_count == 0 and fixed_count == 1:
         return text, "ALREADY PATCHED"
 
     raise UpstreamChangedError(
-        f"{LUA_FUNCTION}: expected one client or one server transmit call in its "
-        f"body; found client={client_count}, server={server_count}"
+        f"{LUA_FUNCTION}: expected one server or one client transmit call in its "
+        f"body; found server={broken_count}, client={fixed_count}"
     )
 
 
@@ -114,42 +118,60 @@ def tile_block(text, sprite_name):
 
 
 def plan_tile_fix(text):
-    """Return replacement text and per-tile statuses for the ladder repair."""
-    newline = "\r\n" if "\r\n" in text else "\n"
-    insertions = []
+    """Plan each independent ladder repair without rejecting unrelated targets."""
+    removals = []
     statuses = []
     for sprite_name, expected_ladder in LADDER_PROPERTIES.items():
-        start, end = tile_block(text, sprite_name)
-        block = text[start:end]
-        ladders = re.findall(r"(?m)^[ \t]*(ladder[WNES])[ \t]*=", block)
-        unexpected = sorted(set(ladders) - {expected_ladder})
-        if unexpected:
-            raise UpstreamChangedError(
-                f"{sprite_name}: expected {expected_ladder} but found "
-                f"{', '.join(unexpected)}"
-            )
-        if ladders.count(expected_ladder) > 1:
-            raise UpstreamChangedError(
-                f"{sprite_name}: {expected_ladder} occurs more than once"
-            )
-        if ladders:
-            statuses.append((sprite_name, "ALREADY PATCHED"))
+        try:
+            start, end = tile_block(text, sprite_name)
+        except UpstreamChangedError as exc:
+            statuses.append((sprite_name, "SKIPPED / UPSTREAM CHANGED", str(exc)))
             continue
-
+        block = text[start:end]
+        ladders = list(re.finditer(
+            r"(?m)^(?P<indent>[ \t]*)(?P<name>ladder[WNES])[ \t]*="
+            r"(?P<value>[^\r\n]*)(?:\r?\n|$)",
+            block,
+        ))
+        unexpected = sorted({match.group("name") for match in ladders}
+                            - {expected_ladder})
+        if unexpected:
+            statuses.append((
+                sprite_name,
+                "SKIPPED / UPSTREAM CHANGED",
+                f"expected {expected_ladder} but found {', '.join(unexpected)}",
+            ))
+            continue
+        expected = [match for match in ladders if match.group("name") == expected_ladder]
+        if len(expected) > 1:
+            statuses.append((
+                sprite_name,
+                "SKIPPED / UPSTREAM CHANGED",
+                f"{expected_ladder} occurs more than once",
+            ))
+            continue
         force_fade = list(re.finditer(
             r"(?m)^(?P<indent>[ \t]*)forceFade[ \t]*=[ \t]*(?=\r?$)", block
         ))
         if len(force_fade) != 1:
-            raise UpstreamChangedError(
-                f"{sprite_name}: expected exactly one forceFade property; "
-                f"found {len(force_fade)}"
-            )
-        match = force_fade[0]
-        insertions.append((start + match.end(), f"{newline}{match.group('indent')}{expected_ladder} ="))
-        statuses.append((sprite_name, "APPLIED"))
+            statuses.append((
+                sprite_name,
+                "SKIPPED / UPSTREAM CHANGED",
+                f"expected exactly one forceFade property; found {len(force_fade)}",
+            ))
+            continue
+        if not expected:
+            statuses.append((sprite_name, "ALREADY PATCHED", None))
+            continue
+        match = expected[0]
+        if match.group("value").strip():
+            statuses.append((sprite_name, "UPSTREAM FIXED / SKIP", None))
+            continue
+        removals.append((start + match.start(), start + match.end()))
+        statuses.append((sprite_name, "APPLIED", None))
 
-    for position, insertion in reversed(insertions):
-        text = text[:position] + insertion + text[position:]
+    for start, end in reversed(removals):
+        text = text[:start] + text[end:]
     return text, statuses
 
 
@@ -157,50 +179,47 @@ def run(ctx):
     log = ctx["log"]
     mod_root = ctx["WORKSHOP"] / WORKSHOP_ID / MOD_ROOT
     if not mod_root.is_dir():
-        log("MoreDamagedObjects world-object sync: SKIPPED / TARGET MISSING (mod not installed).")
-        log("MoreDamagedObjects ladder tile properties: SKIPPED / TARGET MISSING (mod not installed).")
+        log("MoreDamagedObjects world-object sync: SKIPPED / TARGET NOT INSTALLED.")
+        log("MoreDamagedObjects ladder tile properties: SKIPPED / TARGET NOT INSTALLED.")
         return False
 
     lua_path = mod_root / LUA_RELATIVE
     tile_path = mod_root / TILE_RELATIVE
-    try:
-        if lua_path.is_file():
+    lua_changed = False
+    if lua_path.is_file():
+        try:
             lua_text = lua_path.read_text(encoding="utf-8", errors="strict")
             updated_lua, lua_status = plan_lua_fix(lua_text)
+        except (UnicodeError, UpstreamChangedError) as exc:
+            log(f"MoreDamagedObjects world-object sync: SKIPPED / UPSTREAM CHANGED ({exc}).")
         else:
-            lua_text = updated_lua = None
-            lua_status = "SKIPPED / TARGET MISSING"
-    except (OSError, UnicodeError, UpstreamChangedError) as exc:
-        log(f"MoreDamagedObjects world-object sync: FAILED / UPSTREAM CHANGED ({exc}).")
-        raise UpstreamChangedError(str(exc)) from exc
+            if updated_lua != lua_text:
+                rewrite_atomically(lua_path, updated_lua)
+                lua_changed = True
+                log("MoreDamagedObjects world-object sync: patched.")
+            else:
+                log(f"MoreDamagedObjects world-object sync: {lua_status}.")
+    else:
+        log(f"MoreDamagedObjects world-object sync: SKIPPED / TARGET MISSING ({lua_path}).")
 
-    try:
-        if tile_path.is_file():
+    tile_changed = False
+    if tile_path.is_file():
+        try:
             tile_text = tile_path.read_text(encoding="utf-8", errors="strict")
             updated_tiles, tile_statuses = plan_tile_fix(tile_text)
+        except UnicodeError as exc:
+            log(f"MoreDamagedObjects ladder tile properties: SKIPPED / UPSTREAM CHANGED ({exc}).")
         else:
-            tile_text = updated_tiles = None
-            tile_statuses = []
-    except (OSError, UnicodeError, UpstreamChangedError) as exc:
-        log(f"MoreDamagedObjects ladder tile properties: FAILED / UPSTREAM CHANGED ({exc}).")
-        raise UpstreamChangedError(str(exc)) from exc
-
-    if updated_lua is not None and updated_lua != lua_text:
-        rewrite_atomically(lua_path, updated_lua)
-    if updated_tiles is not None and updated_tiles != tile_text:
-        rewrite_atomically(tile_path, updated_tiles)
-
-    lua_detail = f" ({lua_path})" if lua_text is None else ""
-    log(f"MoreDamagedObjects world-object sync: {lua_status}.{lua_detail}")
-    if tile_text is None:
-        log(f"MoreDamagedObjects ladder tile properties: SKIPPED / TARGET MISSING ({tile_path}).")
+            if updated_tiles != tile_text:
+                rewrite_atomically(tile_path, updated_tiles)
+                tile_changed = True
+                log("MoreDamagedObjects ladder tile properties: patched.")
+            for sprite_name, status, reason in tile_statuses:
+                detail = f" ({reason})" if reason else ""
+                log(f"MoreDamagedObjects ladder tile properties {sprite_name}: {status}{detail}.")
     else:
-        for sprite_name, status in tile_statuses:
-            log(f"MoreDamagedObjects ladder tile properties {sprite_name}: {status}.")
-    return (
-        (updated_lua is not None and updated_lua != lua_text)
-        or (updated_tiles is not None and updated_tiles != tile_text)
-    )
+        log(f"MoreDamagedObjects ladder tile properties: SKIPPED / TARGET MISSING ({tile_path}).")
+    return lua_changed or tile_changed
 
 
 FIX = {
