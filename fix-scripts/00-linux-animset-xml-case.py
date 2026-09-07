@@ -146,6 +146,71 @@ def ensure_case_alias(source, destination):
     return "created"
 
 
+def mod_info_id(path):
+    """Return the sole declared Mod ID, or None for malformed metadata."""
+    matches = re.findall(
+        r"(?m)^\s*id\s*=\s*([^\r\n]+?)\s*$",
+        path.read_text(encoding="utf-8", errors="replace"),
+    )
+    return matches[0] if len(matches) == 1 else None
+
+
+def active_mod_roots(workshop, active_workshop_ids, active_mod_ids):
+    """Yield installed mod roots whose mod.info IDs are currently active."""
+    if not active_mod_ids:
+        return
+
+    active_ids = set(active_mod_ids)
+    for workshop_id in active_workshop_ids:
+        mods_root = workshop / workshop_id / "mods"
+        if not mods_root.is_dir():
+            continue
+
+        for mod_root in sorted(mods_root.iterdir()):
+            if mod_root.is_symlink() or not mod_root.is_dir():
+                continue
+            try:
+                infos = mod_root.rglob("mod.info")
+                if any(
+                    mod_info_id(info) in active_ids
+                    for info in infos
+                    if info.is_file()
+                ):
+                    yield mod_root
+            except OSError:
+                continue
+
+
+def create_active_mod_root_aliases(ctx):
+    """Alias active mixed-case mod roots for PZ's lowercase path lookup."""
+    log = ctx["log"]
+    changed = False
+
+    for source in active_mod_roots(
+        ctx["WORKSHOP"],
+        ctx["active_workshop_ids"],
+        ctx.get("active_mod_ids", ()),
+    ):
+        destination = source.with_name(source.name.lower())
+        if destination == source:
+            continue
+
+        result = ensure_case_alias(source, destination)
+        if result == "created":
+            log(
+                "Linux case aliases: created active mod-root alias "
+                f"{destination} -> {source.name}."
+            )
+            changed = True
+        elif result in ("blocked", "unexpected", "unfixable"):
+            log(
+                "Linux case aliases: "
+                f"{result}; leaving untouched: {destination}"
+            )
+
+    return changed
+
+
 def active_media_roots(workshop, active_workshop_ids):
     """Yield media directories belonging to active Workshop items only."""
     for workshop_id in active_workshop_ids:
@@ -282,7 +347,9 @@ def resolve_case_only_path(path_text, workshop, active_workshop_ids):
 
 def run(ctx):
     log = ctx["log"]
-    changed = create_preventive_directory_aliases(ctx)
+    changed = create_active_mod_root_aliases(ctx)
+    if create_preventive_directory_aliases(ctx):
+        changed = True
     log_path = ctx["latest_pz_server_log"]()
     if log_path is None:
         log("Linux case aliases: no persisted PZ server startup log found; file repair skipped.")

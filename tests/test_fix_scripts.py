@@ -16,6 +16,7 @@ def configured_runner(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "WORKSHOP", tmp_path / "workshop")
     monkeypatch.setattr(runner, "LOG_ROOTS", [])
     monkeypatch.setattr(runner, "ACTIVE_WORKSHOP_IDS", ())
+    monkeypatch.setattr(runner, "ACTIVE_MOD_IDS", ())
     monkeypatch.setattr(runner, "STATE_FILE", tmp_path / "state.json")
     monkeypatch.setattr(runner, "CONTAINER", "test")
     return runner
@@ -126,6 +127,98 @@ def test_log_driven_case_fix_rebases_container_workshop_paths_safely(tmp_path):
     (mod_root / "other.lua").write_text("one", encoding="utf-8")
     (mod_root / "OTHER.LUA").write_text("two", encoding="utf-8")
     assert module.resolve_case_only_path(str(mod_root / "Other.lua"), workshop, ("123",))[0] == "ambiguous"
+
+
+def active_case_context(workshop, workshop_id, mod_id, log=None):
+    ctx = fix_context(workshop, log)
+    ctx.update({
+        "active_workshop_ids": (workshop_id,),
+        "active_mod_ids": (mod_id,),
+    })
+    return ctx
+
+
+def write_mod_info(mod_root, mod_id):
+    info = mod_root / "42/mod.info"
+    info.parent.mkdir(parents=True, exist_ok=True)
+    info.write_text(f"id={mod_id}\n", encoding="utf-8")
+
+
+def test_linux_case_fix_creates_active_mixed_case_mod_root_alias(tmp_path):
+    module = load_path_module(FIX_DIR / "00-linux-animset-xml-case.py")
+    workshop = tmp_path / "workshop"
+    source = workshop / "3404737883/mods/AutotsarMotorClub"
+    write_mod_info(source, "AutoTsarMotorClub")
+
+    assert module.FIX["run"](active_case_context(
+        workshop, "3404737883", "AutoTsarMotorClub",
+    ))
+    destination = source.with_name("autotsarmotorclub")
+    assert destination.is_symlink()
+    assert destination.readlink() == source.relative_to(destination.parent)
+    assert destination.samefile(source)
+    assert not module.FIX["run"](active_case_context(
+        workshop, "3404737883", "AutoTsarMotorClub",
+    ))
+
+
+def test_linux_case_fix_leaves_existing_mod_root_alias_conflicts_untouched(tmp_path):
+    module = load_path_module(FIX_DIR / "00-linux-animset-xml-case.py")
+    workshop = tmp_path / "workshop"
+    source = workshop / "123/mods/MixedCase"
+    write_mod_info(source, "ActiveMod")
+    destination = source.with_name("mixedcase")
+    messages = []
+    ctx = active_case_context(workshop, "123", "ActiveMod", messages.append)
+
+    destination.mkdir()
+    assert not module.FIX["run"](ctx)
+    assert destination.is_dir() and not destination.is_symlink()
+    assert any("blocked; leaving untouched" in message for message in messages)
+
+    destination.rmdir()
+    other = workshop / "123/mods/Other"
+    other.mkdir()
+    destination.symlink_to(other.name, target_is_directory=True)
+    assert not module.FIX["run"](ctx)
+    assert destination.is_symlink()
+    assert destination.readlink() == other.relative_to(destination.parent)
+    assert any("unexpected; leaving untouched" in message for message in messages)
+
+
+def test_linux_case_fix_skips_lowercase_and_inactive_mod_roots(tmp_path):
+    module = load_path_module(FIX_DIR / "00-linux-animset-xml-case.py")
+    workshop = tmp_path / "workshop"
+    lowercase = workshop / "123/mods/alreadylowercase"
+    inactive = workshop / "123/mods/InactiveMixedCase"
+    write_mod_info(lowercase, "LowercaseMod")
+    write_mod_info(inactive, "InactiveMod")
+
+    assert not module.FIX["run"](active_case_context(
+        workshop, "123", "LowercaseMod",
+    ))
+    assert not lowercase.with_name("alreadylowercase").is_symlink()
+    assert not inactive.with_name("inactivemixedcase").exists()
+
+
+def test_linux_case_fix_resolves_lowercased_mod_root_and_animsets_path(tmp_path):
+    module = load_path_module(FIX_DIR / "00-linux-animset-xml-case.py")
+    workshop = tmp_path / "workshop"
+    source = workshop / "3404737883/mods/AutotsarMotorClub"
+    write_mod_info(source, "AutoTsarMotorClub")
+    xml = source / "common/media/AnimSets/player-vehicle/actions/Eat1HandWAVE0.xml"
+    xml.parent.mkdir(parents=True)
+    xml.write_text("xml", encoding="utf-8")
+
+    assert module.FIX["run"](active_case_context(
+        workshop, "3404737883", "AutoTsarMotorClub",
+    ))
+    resolved = workshop / (
+        "3404737883/mods/autotsarmotorclub/common/media/animsets/"
+        "player-vehicle/actions/eat1handwave0.xml"
+    )
+    assert resolved.is_file()
+    assert resolved.read_text(encoding="utf-8") == "xml"
 
 
 def make_glb(document, binary):

@@ -44,6 +44,7 @@ def fix_context(workshop: Path, log=None):
     return {
         "WORKSHOP": workshop,
         "active_workshop_ids": (),
+        "active_mod_ids": (),
         "latest_pz_server_log": lambda: None,
         "log": log,
         "sha256": sha256,

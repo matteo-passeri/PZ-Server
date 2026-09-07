@@ -17,6 +17,7 @@ BASE = None
 WORKSHOP = None
 LOG_ROOTS = None
 ACTIVE_WORKSHOP_IDS = None
+ACTIVE_MOD_IDS = None
 STATE_FILE = None
 CONTAINER = None
 FIX_SCRIPTS_DIR = None
@@ -86,11 +87,22 @@ def active_workshop_ids_from_env(env):
     return tuple(result)
 
 
+def active_mod_ids_from_env(env):
+    """Return active Mod IDs in generated configuration order."""
+    result = []
+    for mod_id in env.get("PZ_MOD_NAMES", "").split(";"):
+        mod_id = mod_id.strip()
+        if mod_id and mod_id not in result:
+            result.append(mod_id)
+    return tuple(result)
+
+
 def load_configuration():
     global BASE
     global WORKSHOP
     global LOG_ROOTS
     global ACTIVE_WORKSHOP_IDS
+    global ACTIVE_MOD_IDS
     global STATE_FILE
     global CONTAINER
     global FIX_SCRIPTS_DIR
@@ -113,6 +125,7 @@ def load_configuration():
         ]
 
     ACTIVE_WORKSHOP_IDS = active_workshop_ids_from_env(env)
+    ACTIVE_MOD_IDS = active_mod_ids_from_env(env)
     STATE_FILE = BASE / ".pz-local-fixes-state.json"
     CONTAINER = required_env(env, "PZ_CONTAINER")
     FIX_SCRIPTS_DIR = SCRIPT_DIR / "fix-scripts"
@@ -340,6 +353,7 @@ def build_context(state):
         "BASE": BASE,
         "WORKSHOP": WORKSHOP,
         "active_workshop_ids": ACTIVE_WORKSHOP_IDS,
+        "active_mod_ids": ACTIVE_MOD_IDS,
         "latest_pz_server_log": latest_pz_server_log,
         "STATE_FILE": STATE_FILE,
         "CONTAINER": CONTAINER,
