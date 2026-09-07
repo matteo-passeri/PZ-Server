@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import tempfile
 
 
@@ -183,6 +184,8 @@ def validate_translation(path):
 def plan_active_tree(mod_root, source_tree):
     """Plan only the B42.20 metadata files, sourced from the installed mod."""
     target_tree = mod_root / TARGET_VERSION_NAME
+    if target_tree.is_symlink():
+        raise CompatibilityMismatch("42.20 target is a symlink")
     if source_tree == target_tree:
         return target_tree, None, []
     if target_tree.exists():
@@ -208,6 +211,43 @@ def install_active_tree(target_tree, mod_info_text, translations, source_tree):
         shutil.copy2(source, destination)
 
 
+def normalize_tree_metadata(tree, ownership_source):
+    """Match generated-tree ownership to installed content without following links."""
+    source_stat = ownership_source.stat()
+    uid, gid = source_stat.st_uid, source_stat.st_gid
+    changed = False
+
+    def normalize(path):
+        nonlocal changed
+        path_stat = path.lstat()
+        if (path_stat.st_uid, path_stat.st_gid) != (uid, gid):
+            os.chown(path, uid, gid, follow_symlinks=False)
+            changed = True
+
+        if stat.S_ISDIR(path_stat.st_mode):
+            expected_mode = 0o755
+        elif stat.S_ISREG(path_stat.st_mode):
+            expected_mode = 0o644
+        else:
+            return
+
+        if stat.S_IMODE(path_stat.st_mode) != expected_mode:
+            os.chmod(path, expected_mode, follow_symlinks=False)
+            changed = True
+
+    normalize(tree)
+    for directory, directory_names, file_names in os.walk(tree, followlinks=False):
+        directory_path = Path(directory)
+        for name in list(directory_names):
+            path = directory_path / name
+            normalize(path)
+            if path.is_symlink():
+                directory_names.remove(name)
+        for name in file_names:
+            normalize(directory_path / name)
+    return changed
+
+
 def patch_mod(mod_root, log):
     lua_path = mod_root / LUA_RELATIVE
     if not lua_path.is_file():
@@ -230,13 +270,9 @@ def patch_mod(mod_root, log):
 
     lua_changed = updated_lua != lua_text
     tree_changed = mod_info_text is not None
-    if not lua_changed and not tree_changed:
-        backup = lua_path.with_suffix(lua_path.suffix + ".pz-local-fix.bak")
-        status = "ALREADY PATCHED" if backup.is_file() else "UPSTREAM FIXED / SKIP"
-        log(f"NearbyAnimals: {status}.")
-        return False
-
-    log("NearbyAnimals: applying B42.20 compatibility patch.")
+    metadata_changed = False
+    if lua_changed or tree_changed:
+        log("NearbyAnimals: applying B42.20 compatibility patch.")
     if lua_changed:
         backup = lua_path.with_suffix(lua_path.suffix + ".pz-local-fix.bak")
         if not backup.exists():
@@ -246,7 +282,15 @@ def patch_mod(mod_root, log):
     if tree_changed:
         install_active_tree(target_tree, mod_info_text, translations, source_tree)
         log("NearbyAnimals: created active 42.20 metadata tree from installed Workshop content.")
-    return True
+    ownership_source = source_tree if source_tree != target_tree else mod_root
+    metadata_changed = normalize_tree_metadata(target_tree, ownership_source)
+    if metadata_changed:
+        log("NearbyAnimals: normalized active 42.20 tree ownership and permissions.")
+    if not lua_changed and not tree_changed and not metadata_changed:
+        backup = lua_path.with_suffix(lua_path.suffix + ".pz-local-fix.bak")
+        status = "ALREADY PATCHED" if backup.is_file() else "UPSTREAM FIXED / SKIP"
+        log(f"NearbyAnimals: {status}.")
+    return lua_changed or tree_changed or metadata_changed
 
 
 def run(ctx):
