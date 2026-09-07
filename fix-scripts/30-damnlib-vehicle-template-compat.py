@@ -1,12 +1,58 @@
 #!/usr/bin/env python3
-"""Recover only safe older damnlib placeholder templates for B42.20."""
+"""Supply only needed DAMN B42.20 compatibility placeholders."""
 import re
-from _vehicle_compat import TEMPLATE_RE, add_compatibility_templates, named_blocks, template_locations, tree
+from _vehicle_compat import (
+    TEMPLATE_RE,
+    active_mod_script_files,
+    add_compatibility_templates,
+    named_blocks,
+    template_locations,
+    tree,
+)
 
 WORKSHOP_ID = "3171167894"
 MOD_NAME = "damnlib"
 ACTIVE_VERSION = "42.20"
 REFERENCE_RE = re.compile(r"\btemplate\s*=\s*(DAMN[A-Za-z0-9_]+)\b")
+VERIFIED_PLACEHOLDER_NAMES = frozenset((
+    "DAMN76chevyK10mccoy",
+    "DAMN76chevyK20brickingIt",
+    "DAMN76chevyK20callowayLandscaping",
+    "DAMN76chevyK20fossoil",
+    "DAMN76chevyK20helton",
+    "DAMN76chevyK20kimblesCon",
+    "DAMN76chevyK20kyLumber",
+    "DAMN76chevyK20marchRidgeCon",
+    "DAMN76chevyK20weldingCamille",
+    "DAMN76chevyK20yingsWood",
+    "DAMN85chevyImpalaPD",
+    "DAMN85chevyStepVanBlacksmith",
+    "DAMN85chevyStepVanButchers",
+    "DAMN85chevyStepVanCitrusWave",
+    "DAMN85chevyStepVanDelirosPlonkies",
+    "DAMN85chevyStepVanFlorist",
+    "DAMN85chevyStepVanGenuine",
+    "DAMN85chevyStepVanHerald",
+    "DAMN85chevyStepVanJorgensen",
+    "DAMN85chevyStepVanLibrary",
+    "DAMN85chevyStepVanLvAirportCatering",
+    "DAMN85chevyStepVanLvMotorshop",
+    "DAMN85chevyStepVanMarineBites",
+    "DAMN85chevyStepVanMasonry",
+    "DAMN85chevyStepVanMrHuangsLaundry",
+    "DAMN85chevyStepVanPostal",
+    "DAMN85chevyStepVanPropane",
+    "DAMN85chevyStepVanRandys",
+    "DAMN85chevyStepVanScarletOak",
+    "DAMN85chevyStepVanSeHospitality",
+    "DAMN85chevyStepVanSePaintingServices",
+    "DAMN85chevyStepVanSmartCut",
+    "DAMN85chevyStepVanSunBallz",
+    "DAMN85chevyStepVanTheCompleteRepair",
+    "DAMN85chevyStepVanTimelessGlass",
+    "DAMN85chevyStepVanUsLogistics",
+    "DAMN85chevyStepVanZippeeMarket",
+))
 
 
 def safe_empty_template(block):
@@ -14,24 +60,13 @@ def safe_empty_template(block):
     return "part " not in block and "part\t" not in block
 
 
-def active_script_files(workshop, active_workshop_ids):
-    """Yield supported mod script trees only, never backups or arbitrary trees."""
-    for workshop_id in active_workshop_ids:
-        mods_root = workshop / workshop_id / "mods"
-        if not mods_root.is_dir():
-            continue
-        for mod_root in sorted(path for path in mods_root.iterdir() if path.is_dir()):
-            candidates = [mod_root / "media" / "scripts"]
-            for version in ("legacy", "42", "42.0", "42.13", "42.17", "42.20"):
-                candidates.append(mod_root / version / "media" / "scripts")
-            for scripts in candidates:
-                if scripts.is_dir():
-                    yield from sorted(path for path in scripts.rglob("*.txt") if ".pz-local-fix" not in path.name)
+def empty_template(name):
+    return f"template vehicle {name}\n{{\n/* */\n}}"
 
 
-def active_references(workshop, active_workshop_ids):
+def active_references(workshop, active_workshop_ids, active_mod_ids):
     references = set()
-    for path in active_script_files(workshop, active_workshop_ids):
+    for path in active_mod_script_files(workshop, active_workshop_ids, active_mod_ids):
         references.update(REFERENCE_RE.findall(path.read_text(encoding="utf-8", errors="replace")))
     return references
 
@@ -45,7 +80,9 @@ def run(ctx):
         return False
     upstream = template_locations(active)
     wanted = {}
-    references = active_references(ctx["WORKSHOP"], ctx["active_workshop_ids"])
+    references = active_references(
+        ctx["WORKSHOP"], ctx["active_workshop_ids"], ctx.get("active_mod_ids", ())
+    )
     if not references:
         log("damnlib: no active DAMN template references found; skipped.")
         return False
@@ -69,6 +106,9 @@ def run(ctx):
                     and safe_empty_template(block)
                 ):
                     wanted[name] = block
+    for name in references & VERIFIED_PLACEHOLDER_NAMES:
+        if name not in upstream and name not in wanted:
+            wanted[name] = empty_template(name)
     target = active / "media/scripts/commonItems/ZZ_DAMN_42_20_Compatibility.txt"
     if not wanted:
         log("damnlib: no safe older compatibility templates needed; already fixed or upstream changed.")
