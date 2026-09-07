@@ -69,6 +69,16 @@ def backup_and_write(path, text):
     path.write_text(text, encoding="utf-8")
 
 
+def backup_and_write_bytes(path, data):
+    """Write bytes in place so the target file retains its ownership and mode."""
+    backup = path.with_suffix(path.suffix + ".pz-local-fix.bak")
+    if path.exists() and not backup.exists():
+        shutil.copy2(path, backup)
+    with path.open("r+b") as stream:
+        stream.write(data)
+        stream.truncate()
+
+
 def add_compatibility_templates(path, wanted, upstream, log, label):
     """Append missing named blocks in a separate module without replacing content."""
     current = {}
