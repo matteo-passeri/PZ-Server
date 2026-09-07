@@ -36,6 +36,11 @@ losers = ["WorkingGuttersRemoved"]
 removed_fallback = "WorkingGuttersRemoved"
 reason = "Keep placeholder definitions required by existing saves after removing WorkingGutters."
 
+[[mods.prefer]]
+winner = "MinidoracatAutoDriveFor42"
+losers = ["Navigator"]
+reason = "Minidoracat AutoDrive declares Navigator incompatible; AutoDrive takes precedence when both are present."
+
 # Add [[mods.conflict]] rules for incompatibilities without a universal winner.
 
 [workshop]

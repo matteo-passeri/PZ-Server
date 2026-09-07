@@ -72,6 +72,35 @@ def test_rules_file_and_offline_cli(capsys, monkeypatch):
     assert "Rules OK" in capsys.readouterr().out
 
 
+def test_minidoracat_autodrive_preference_is_conditional_and_keeps_load_order():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    project_rules = generator.load_mod_rules(ROOT / "mod-rules.toml")
+    ui = "MinidoracatUIFor42"
+    minimap = "MinidoracatMiniMapFor42"
+    autodrive = "MinidoracatAutoDriveFor42"
+
+    active, decisions, _conflicts = generator.resolve_mod_rules(
+        [autodrive, "Navigator", minimap, ui], project_rules,
+    )
+    assert "Navigator" not in active
+    assert active == [autodrive, minimap, ui]
+    assert decisions[-1] == {
+        "mod_id": "Navigator",
+        "status": "excluded",
+        "reason": "superseded",
+        "superseded_by": autodrive,
+        "rule_reason": (
+            "Minidoracat AutoDrive declares Navigator incompatible; "
+            "AutoDrive takes precedence when both are present."
+        ),
+    }
+    ordered = generator.reorder_mod_ids(active)
+    assert ordered.index(ui) < ordered.index(minimap) < ordered.index(autodrive)
+
+    assert generator.resolve_mod_rules(["Navigator"], project_rules)[0] == ["Navigator"]
+    assert generator.resolve_mod_rules([autodrive], project_rules)[0] == [autodrive]
+
+
 def test_multi_mod_workshop_keeps_other_active_mod_and_forced_ids_are_explicit():
     generator = load_path_module(ROOT / "generate-mod-list.py")
     # Workshop selection reports both IDs; filtering happens later at Mod-ID
