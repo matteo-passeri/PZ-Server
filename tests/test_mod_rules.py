@@ -81,6 +81,13 @@ def test_multi_mod_workshop_keeps_other_active_mod_and_forced_ids_are_explicit()
     assert decisions[-1] == {"mod_id": "Forced", "status": "included", "reason": "manual forced"}
 
 
+def test_unknown_multi_mod_workshop_remains_unresolved_without_a_rule():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    selected, unresolved = generator.select_workshop_mod_ids(["Base", "Addon"], [], None)
+    assert selected == []
+    assert unresolved == ["Base", "Addon"]
+
+
 def test_always_exclude_resolves_neat_building_multi_mod_item():
     generator = load_path_module(ROOT / "generate-mod-list.py")
     discovered = [
@@ -574,6 +581,82 @@ def test_lg_extended_electricity_curated_default_keeps_power_usage_optional():
         [selection_record(workshop_id, discovered, explicit=["LGRealisticPowerUsage"])],
         generator.MOD_SELECTION_RULES,
     )[0] == ["LGExtendedElectricity", "LGRealisticPowerUsage"]
+
+
+@pytest.mark.parametrize(("workshop_id", "discovered", "expected"), [
+    ("3775549570", ["alicesWeaponSling", "alicesWeaponSlingRadialMenu"], ["alicesWeaponSling"]),
+    ("2940354599", ["FWOFitnessWorkoutOverhaul", "FWOBenchPressTreadmill"], ["FWOFitnessWorkoutOverhaul"]),
+    ("3610677934", ["HBVCEFb42", "HBTacReload", "zHBVCEF"], ["HBVCEFb42"]),
+])
+def test_curated_optional_addons_remain_disabled_by_default(workshop_id, discovered, expected):
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    selected, decisions, _pairs, _replacements = select(
+        generator, [selection_record(workshop_id, discovered)], generator.MOD_SELECTION_RULES,
+    )
+    assert selected == expected
+    assert decisions[0]["reason"] == "curated_default"
+    assert decisions[0]["rejected"] == [mod_id for mod_id in discovered if mod_id not in expected]
+
+
+def test_ladders_curated_default_excludes_legacy_variants():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    workshop_id = "3629835761"
+    discovered = [
+        "Ladders42131",
+        "Ladders4220",
+        "Ladders42204",
+        "Ladders42131 - for b42.19",
+        "Ladders4220 - for B42.20.4 - existing saves before recent mod update",
+    ]
+    records = [selection_record(workshop_id, discovered)]
+
+    assert select(generator, records, generator.MOD_SELECTION_RULES)[0] == ["Ladders42204"]
+    assert final_mod_names(
+        generator, records, selection_rules=generator.MOD_SELECTION_RULES,
+    ).split(";") == ["Ladders42204"]
+    assert select(
+        generator,
+        [selection_record(workshop_id, discovered, explicit=["Ladders4220"])],
+        generator.MOD_SELECTION_RULES,
+    )[0] == ["Ladders4220"]
+
+
+def test_local_mod_info_ids_replace_stale_workshop_metadata_for_ki5_k_series(tmp_path):
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    workshop_id = "3161951724"
+    workshop_root = tmp_path / "content"
+    base_info = workshop_root / workshop_id / "mods" / "76chevyKseries" / "42.20" / "mod.info"
+    expanded_info = workshop_root / workshop_id / "mods" / "76chevyKseriesExpanded" / "42.20" / "mod.info"
+    base_info.parent.mkdir(parents=True)
+    expanded_info.parent.mkdir(parents=True)
+    base_info.write_text("id=76chevyKseries\nrequire=damnlib\n", encoding="utf-8")
+    expanded_info.write_text(
+        "id=76chevyKserieseExpanded\nrequire=76chevyKseries\n", encoding="utf-8",
+    )
+
+    local = generator.extract_local_mod_ids(workshop_root, workshop_id)
+    discovered = generator.discover_workshop_mod_ids(
+        ["76chevyKseries", "76chevyKseriesExpanded"], local,
+    )
+    records = [selection_record(workshop_id, discovered)]
+
+    assert discovered == ["76chevyKseries", "76chevyKserieseExpanded"]
+    assert select(generator, records, generator.MOD_SELECTION_RULES)[0] == discovered
+    assert final_mod_names(
+        generator, records, selection_rules=generator.MOD_SELECTION_RULES,
+    ).split(";") == discovered
+    assert "76chevyKseriesExpanded" not in discovered
+
+
+@pytest.mark.parametrize("workshop_id, discovered", [
+    ("1", ["85chevyStepVan", "85chevyStepVanexpanded"]),
+    ("2", ["93chevySuburban", "93chevySuburbanExpanded"]),
+])
+def test_existing_ki5_base_and_expanded_pairs_remain_enabled(workshop_id, discovered):
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    records = [selection_record(workshop_id, discovered, current=discovered)]
+    assert select(generator, records, generator.MOD_SELECTION_RULES)[0] == discovered
+    assert final_mod_names(generator, records, selection_rules=generator.MOD_SELECTION_RULES).split(";") == discovered
 
 
 def test_selection_condition_and_curated_removed_transition():

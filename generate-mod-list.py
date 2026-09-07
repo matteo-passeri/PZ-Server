@@ -168,6 +168,31 @@ class ModSelectionError(RuntimeError):
 # Add only verified Workshop rules here. Exact X/XRemoved pairs are inferred
 # safely at runtime and therefore do not require an entry.
 MOD_SELECTION_RULES: dict[str, dict[str, Any]] = {
+    "2940354599": {
+        "mod_ids": ["FWOFitnessWorkoutOverhaul", "FWOBenchPressTreadmill"],
+        "default": ["FWOFitnessWorkoutOverhaul"],
+        "optional": ["FWOBenchPressTreadmill"],
+    },
+    "3161951724": {
+        "mod_ids": ["76chevyKseries", "76chevyKserieseExpanded"],
+        "default": ["76chevyKseries", "76chevyKserieseExpanded"],
+    },
+    "3610677934": {
+        "mod_ids": ["HBVCEFb42", "HBTacReload", "zHBVCEF"],
+        "default": ["HBVCEFb42"],
+        "optional": ["HBTacReload", "zHBVCEF"],
+    },
+    "3629835761": {
+        "mod_ids": ["Ladders42131", "Ladders4220", "Ladders42204"],
+        "default": ["Ladders42204"],
+        "optional": ["Ladders42131", "Ladders4220"],
+        "exclusive_groups": [["Ladders4220", "Ladders42204"]],
+    },
+    "3775549570": {
+        "mod_ids": ["alicesWeaponSling", "alicesWeaponSlingRadialMenu"],
+        "default": ["alicesWeaponSling"],
+        "optional": ["alicesWeaponSlingRadialMenu"],
+    },
     "3779562002": {
         "mod_ids": ["LGExtendedElectricity", "LGRealisticPowerUsage"],
         "default": ["LGExtendedElectricity"],
@@ -1474,7 +1499,7 @@ def select_workshop_mod_ids(
     if override_mod_ids is not None:
         return list(override_mod_ids), []
 
-    discovered = list(dict.fromkeys(description_mod_ids + local_mod_ids))
+    discovered = discover_workshop_mod_ids(description_mod_ids, local_mod_ids)
     if len(discovered) > 1:
         viable = [
             mod_id for mod_id in discovered
@@ -1489,6 +1514,16 @@ def select_workshop_mod_ids(
         return [], discovered
 
     return discovered, []
+
+
+def discover_workshop_mod_ids(
+    description_mod_ids: list[str],
+    local_mod_ids: list[str],
+    override_mod_ids: list[str] | None = None,
+) -> list[str]:
+    """Prefer applicable local mod.info IDs; use Steam metadata as fallback."""
+    authoritative = local_mod_ids if local_mod_ids else description_mod_ids
+    return list(dict.fromkeys(authoritative + (override_mod_ids or [])))
 
 
 def _selection_ids(value: Any, context: str) -> list[str]:
@@ -2113,9 +2148,11 @@ def main() -> int:
             )
             local_mids = [item["mod_id"] for item in local_mod_metadata]
 
-        discovered_mids = list(dict.fromkeys(
-            description_mids + local_mids + (MOD_ID_OVERRIDES.get(wid) or [])
-        ))
+        discovered_mids = discover_workshop_mod_ids(
+            description_mids,
+            local_mids,
+            MOD_ID_OVERRIDES.get(wid),
+        )
         mids, unresolved_mids = select_workshop_mod_ids(
             description_mids,
             local_mids,
