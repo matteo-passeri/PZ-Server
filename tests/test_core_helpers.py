@@ -160,6 +160,27 @@ def test_default_vro_policy_places_the_vro_stack_before_final_overrides():
     ]
 
 
+def test_minidoracat_dependencies_load_before_autodrive_without_reordering_workshops():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    ui = "MinidoracatUIFor42"
+    minimap = "MinidoracatMiniMapFor42"
+    autodrive = "MinidoracatAutoDriveFor42"
+    active_mod_ids = [autodrive, "Unrelated", minimap, ui]
+    workshop_ids = ["3792675881", "3763913359", "3789836701"]
+
+    ordered = generator.reorder_mod_ids(active_mod_ids)
+    assert (ui, minimap) in generator.MOD_LOAD_BEFORE
+    assert (minimap, autodrive) in generator.MOD_LOAD_BEFORE
+    assert (ui, autodrive) in generator.MOD_LOAD_BEFORE
+    assert ordered.index(ui) < ordered.index(minimap) < ordered.index(autodrive)
+    assert len(ordered) == len(set(ordered))
+    assert workshop_ids == ["3792675881", "3763913359", "3789836701"]
+
+    # Missing dependencies remain harmless and unrelated IDs retain their order.
+    assert generator.reorder_mod_ids([autodrive, "Unrelated"]) == [autodrive, "Unrelated"]
+    assert generator.reorder_mod_ids([autodrive, minimap]) == [minimap, autodrive]
+
+
 def test_mod_info_runtime_rules_validate_dependencies_conflicts_and_order():
     generator = load_path_module(ROOT / "generate-mod-list.py")
     metadata = [{
