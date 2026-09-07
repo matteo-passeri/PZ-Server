@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from conftest import ROOT, load_path_module
@@ -86,6 +88,26 @@ def test_unknown_multi_mod_workshop_remains_unresolved_without_a_rule():
     selected, unresolved = generator.select_workshop_mod_ids(["Base", "Addon"], [], None)
     assert selected == []
     assert unresolved == ["Base", "Addon"]
+
+
+def test_railroader_authoritative_override_resolves_the_missing_steam_mod_id():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    workshop_id = "3774360904"
+    overrides = json.loads(generator.read_env(ROOT / ".env.example")["PZ_MOD_ID_OVERRIDES"])
+
+    mod_ids, unresolved = generator.select_workshop_mod_ids(
+        [], [], overrides[workshop_id],
+    )
+    records = [selection_record(
+        workshop_id, mod_ids, current=mod_ids, explicit=mod_ids,
+    )]
+
+    assert mod_ids == ["Railroader"]
+    assert unresolved == []
+    assert select(generator, records, generator.MOD_SELECTION_RULES)[0] == ["Railroader"]
+    assert final_mod_names(
+        generator, records, selection_rules=generator.MOD_SELECTION_RULES,
+    ).split(";") == ["Railroader"]
 
 
 def test_always_exclude_resolves_neat_building_multi_mod_item():
