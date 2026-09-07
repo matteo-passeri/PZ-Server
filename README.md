@@ -1,7 +1,9 @@
 # Project Zomboid Automated Server
+Easy to set up and no maintenance need it (set up and forget).  
 
 Operational scripts for a Project Zomboid Build 42 dedicated server running
-with Podman Compose. The repository root is the deployment directory: copy the
+with Podman/Docker Compose. 
+The repository root is the deployment directory: copy the
 whole checkout to the server root and run all commands from there.
 
 ## Features
