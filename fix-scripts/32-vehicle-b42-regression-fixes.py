@@ -28,20 +28,13 @@ def looks_like_aquatsar(value):
 
 
 def aquatsar_is_available(ctx):
-    """Detect installed or active Aquatsar from configured IDs and Workshop metadata."""
-    if any(looks_like_aquatsar(mod_id) for mod_id in ctx.get("active_mod_ids", ())):
-        return True
+    """Detect active Aquatsar from configured IDs or active Workshop metadata."""
+    active_mod_ids = ctx.get("active_mod_ids", ())
+    if active_mod_ids:
+        return any(looks_like_aquatsar(mod_id) for mod_id in active_mod_ids)
 
     workshop = ctx["WORKSHOP"]
-    workshop_ids = set(ctx.get("active_workshop_ids", ()))
-    if workshop.is_dir():
-        try:
-            workshop_ids.update(
-                path.name for path in workshop.iterdir() if path.is_dir() and path.name.isdigit()
-            )
-        except OSError:
-            pass
-    for workshop_id in sorted(workshop_ids):
+    for workshop_id in ctx.get("active_workshop_ids", ()):
         mods_root = workshop / workshop_id / "mods"
         if not mods_root.is_dir():
             continue
@@ -126,11 +119,11 @@ def patch_j10_spare_tire(ctx):
 def run(ctx):
     changed = patch_motorclub_api_boat_airbag(ctx)
     changed |= patch_j10_spare_tire(ctx)
-    active = tree(ctx["WORKSHOP"], "3161951724", "76chevyKseries", "42.13")
+    active = tree(ctx["WORKSHOP"], "3161951724", "76chevyKseries", "42.20")
     log = ctx["log"]
     path = active / "media/scripts/vehicles/template_CH76_spareTires.txt"
     if not path.is_file():
-        log("76chevyKseries: 42.13 spare-tire template not present; skipped.")
+        log("76chevyKseries: 42.20 spare-tire template not present; skipped.")
         return changed
     text = path.read_text(encoding="utf-8", errors="replace")
     try:
