@@ -546,6 +546,36 @@ def test_ultimate_towing_curated_default_and_administrator_overrides():
         )
 
 
+def test_lg_extended_electricity_curated_default_keeps_power_usage_optional():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    workshop_id = "3779562002"
+    discovered = ["LGExtendedElectricity", "LGRealisticPowerUsage"]
+    records = [selection_record(workshop_id, discovered)]
+
+    selected, decisions, _pairs, _replacements = select(
+        generator, records, generator.MOD_SELECTION_RULES,
+    )
+    workshop_items = ";".join(record["workshop_id"] for record in records)
+    mods = final_mod_names(
+        generator, records, selection_rules=generator.MOD_SELECTION_RULES,
+    )
+
+    assert selected == ["LGExtendedElectricity"]
+    assert decisions == [{
+        "workshop_id": workshop_id,
+        "selected": ["LGExtendedElectricity"],
+        "rejected": ["LGRealisticPowerUsage"],
+        "reason": "curated_default",
+    }]
+    assert workshop_items.split(";") == [workshop_id]
+    assert mods.split(";") == ["LGExtendedElectricity"]
+    assert select(
+        generator,
+        [selection_record(workshop_id, discovered, explicit=["LGRealisticPowerUsage"])],
+        generator.MOD_SELECTION_RULES,
+    )[0] == ["LGExtendedElectricity", "LGRealisticPowerUsage"]
+
+
 def test_selection_condition_and_curated_removed_transition():
     generator = load_path_module(ROOT / "generate-mod-list.py")
     selection_rules = {

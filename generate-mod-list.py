@@ -168,6 +168,11 @@ class ModSelectionError(RuntimeError):
 # Add only verified Workshop rules here. Exact X/XRemoved pairs are inferred
 # safely at runtime and therefore do not require an entry.
 MOD_SELECTION_RULES: dict[str, dict[str, Any]] = {
+    "3779562002": {
+        "mod_ids": ["LGExtendedElectricity", "LGRealisticPowerUsage"],
+        "default": ["LGExtendedElectricity"],
+        "optional": ["LGRealisticPowerUsage"],
+    },
     "3790880431": {
         "mod_ids": ["UltimateTowing", "UltimateTowingZB"],
         "default": ["UltimateTowing"],
