@@ -341,7 +341,8 @@ def apply_local_fixes():
         [
             "podman",
             "unshare",
-            LOCAL_FIXES,
+            "python3",
+            str(LOCAL_FIXES),
         ],
         cwd=BASE,
         capture_output=True,
@@ -377,7 +378,7 @@ def apply_local_fixes():
         return True
 
     raise LocalPatchError(
-        "apply-local-fixes.py failed "
+        "podman unshare apply-local-fixes.py failed "
         f"(exit code {proc.returncode})"
     )
 

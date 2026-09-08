@@ -66,10 +66,12 @@ def test_motorclub_patches_every_present_version_and_skips_missing_versions(tmp_
     module = load_path_module(FIX_SCRIPTS / "32-vehicle-b42-regression-fixes.py")
     workshop = tmp_path / "workshop"
     common = install_waverunner(workshop, module, "common", b"template = ApiBoatAirbag,\n")
+    v4213 = install_waverunner(workshop, module, "42.13", b"template = ApiBoatAirbag,\n")
     v4215 = install_waverunner(workshop, module, "42.15", b"\ttemplate=ApiBoatAirbag,\n")
 
     assert module.FIX["run"](fix_context(workshop))
     assert common.read_bytes() == b""
+    assert v4213.read_bytes() == b""
     assert v4215.read_bytes() == b""
 
 
@@ -98,6 +100,34 @@ def test_motorclub_patches_when_aquatsar_is_installed_but_inactive(tmp_path):
 
     assert module.FIX["run"](ctx)
     assert path.read_bytes() == b""
+
+
+def test_motorclub_fallback_only_uses_active_workshop_metadata(tmp_path):
+    module = load_path_module(FIX_SCRIPTS / "32-vehicle-b42-regression-fixes.py")
+    workshop = tmp_path / "workshop"
+    path = install_waverunner(workshop, module, "42.13", b"template = ApiBoatAirbag,\n")
+    inactive_info = workshop / "999/mods/AquaTsar/42/mod.info"
+    inactive_info.parent.mkdir(parents=True)
+    inactive_info.write_text("id=AquaTsar\n", encoding="utf-8")
+    ctx = fix_context(workshop)
+    ctx["active_workshop_ids"] = ("100",)
+
+    assert module.FIX["run"](ctx)
+    assert path.read_bytes() == b""
+
+
+def test_motorclub_fallback_leaves_references_when_active_workshop_has_aquatsar(tmp_path):
+    module = load_path_module(FIX_SCRIPTS / "32-vehicle-b42-regression-fixes.py")
+    workshop = tmp_path / "workshop"
+    path = install_waverunner(workshop, module, "42.13", b"template = ApiBoatAirbag,\n")
+    active_info = workshop / "100/mods/AquaTsar/42/mod.info"
+    active_info.parent.mkdir(parents=True)
+    active_info.write_text("id=AquaTsar\n", encoding="utf-8")
+    ctx = fix_context(workshop)
+    ctx["active_workshop_ids"] = ("100",)
+
+    assert not module.FIX["run"](ctx)
+    assert path.read_bytes() == b"template = ApiBoatAirbag,\n"
 
 
 def test_kseries_fixes_only_bad_42_20_parent_template(tmp_path):

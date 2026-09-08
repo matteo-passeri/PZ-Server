@@ -29,10 +29,17 @@ def looks_like_aquatsar(value):
 
 def aquatsar_is_available(ctx):
     """Detect active Aquatsar from configured IDs or active Workshop metadata."""
+    log = ctx["log"]
     active_mod_ids = ctx.get("active_mod_ids", ())
     if active_mod_ids:
-        return any(looks_like_aquatsar(mod_id) for mod_id in active_mod_ids)
+        available = any(looks_like_aquatsar(mod_id) for mod_id in active_mod_ids)
+        log(
+            "Autotsar Motorclub: active_mod_ids authoritative; "
+            f"Aquatsar {'found' if available else 'not found'}."
+        )
+        return available
 
+    log("Autotsar Motorclub: active_mod_ids unavailable; checking active Workshop metadata.")
     workshop = ctx["WORKSHOP"]
     for workshop_id in ctx.get("active_workshop_ids", ()):
         mods_root = workshop / workshop_id / "mods"
@@ -71,6 +78,7 @@ def patch_motorclub_api_boat_airbag(ctx):
     for version in MOTORCLUB_VERSIONS:
         path = mod_root / version / MOTORCLUB_WAVERUNNER_RELATIVE
         if not path.is_file():
+            log(f"Autotsar Motorclub: {version} Waverunner script not present; skipped.")
             continue
         try:
             original = path.read_bytes()
@@ -79,6 +87,7 @@ def patch_motorclub_api_boat_airbag(ctx):
             raise RuntimeError(f"Autotsar Motorclub: unable to read {path}") from exc
         updated, removed = API_BOAT_AIRBAG_LINE_RE.subn(b"", original)
         if not removed:
+            log(f"Autotsar Motorclub: ApiBoatAirbag reference already absent from {version}.")
             continue
         try:
             backup_and_write_bytes(path, updated)

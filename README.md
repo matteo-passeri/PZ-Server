@@ -266,12 +266,13 @@ choosing one arbitrarily.
 Run local patches after Workshop content downloads:
 
 ```bash
-python3 apply-local-fixes.py
+podman unshare python3 apply-local-fixes.py
 ```
 
 Local fixes operate directly on installed mods beneath the configured common
-Workshop root. They do not depend on personal development checkouts or separate
-source mounts. Each compatibility fix is guarded, best-effort, and idempotent:
+Workshop root, which is owned through Podman's rootless user namespace. They do
+not depend on personal development checkouts or separate source mounts. Each
+compatibility fix is guarded, best-effort, and idempotent:
 a missing target, unnecessary or already-applied repair, unknown revision, or
 unrecognized upstream change is a successful skip and must not block server
 startup or update. Unexpected script, framework, and I/O failures remain errors.
