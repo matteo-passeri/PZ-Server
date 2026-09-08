@@ -83,6 +83,7 @@ def test_motorclub_leaves_references_unchanged_when_aquatsar_is_active(tmp_path)
     ctx = fix_context(workshop, messages.append)
     ctx["active_mod_ids"] = ("AquaTsarOptionalBoat",)
 
+    assert module.aquatsar_is_available(ctx)
     assert not module.FIX["run"](ctx)
     assert path.read_bytes() == b"template = ApiBoatAirbag,\n"
     assert any("Aquatsar detected" in message for message in messages)
@@ -98,6 +99,7 @@ def test_motorclub_patches_when_aquatsar_is_installed_but_inactive(tmp_path):
     ctx = fix_context(workshop)
     ctx["active_mod_ids"] = ("UnrelatedActiveMod",)
 
+    assert not module.aquatsar_is_available(ctx)
     assert module.FIX["run"](ctx)
     assert path.read_bytes() == b""
 
@@ -112,6 +114,7 @@ def test_motorclub_fallback_only_uses_active_workshop_metadata(tmp_path):
     ctx = fix_context(workshop)
     ctx["active_workshop_ids"] = ("100",)
 
+    assert not module.aquatsar_is_available(ctx)
     assert module.FIX["run"](ctx)
     assert path.read_bytes() == b""
 
@@ -126,6 +129,7 @@ def test_motorclub_fallback_leaves_references_when_active_workshop_has_aquatsar(
     ctx = fix_context(workshop)
     ctx["active_workshop_ids"] = ("100",)
 
+    assert module.aquatsar_is_available(ctx)
     assert not module.FIX["run"](ctx)
     assert path.read_bytes() == b"template = ApiBoatAirbag,\n"
 
