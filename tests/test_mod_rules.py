@@ -748,6 +748,111 @@ def test_selection_condition_and_curated_removed_transition():
     }]
 
 
+SUPPRESSOR_WORKSHOP_ID = "3795071786"
+SUPPRESSOR_MOD_IDS = [
+    "ShotgunSuppressorB42",
+    "ShotgunSuppressorB42Vanilla",
+    "ShotgunSuppressorB42GoM",
+    "ShotgunSuppressorB42GoMOld",
+    "ShotgunSuppressorB42VWP",
+    "ShotgunSuppressorB42VFE",
+]
+SUPPRESSOR_ALWAYS = ["ShotgunSuppressorB42", "ShotgunSuppressorB42Vanilla"]
+
+
+def suppressor_records(*active_weapon_mod_ids):
+    records = [selection_record(SUPPRESSOR_WORKSHOP_ID, SUPPRESSOR_MOD_IDS)]
+    if active_weapon_mod_ids:
+        records.append(selection_record(
+            "external-weapon-pack",
+            active_weapon_mod_ids,
+            current=active_weapon_mod_ids,
+        ))
+    return records
+
+
+def test_suppressor_workshop_absent_does_not_introduce_any_suppressor_mod_ids():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    selected, decisions, _pairs, _replacements = select(
+        generator,
+        [selection_record("external-weapon-pack", ["Unrelated"], current=["Unrelated"])],
+        generator.MOD_SELECTION_RULES,
+    )
+    assert selected == ["Unrelated"]
+    assert decisions == []
+
+
+@pytest.mark.parametrize(("triggers", "expected"), [
+    ((), SUPPRESSOR_ALWAYS),
+    (("MarzVanillaGuns",), SUPPRESSOR_ALWAYS + ["ShotgunSuppressorB42VWP"]),
+    (("GunsOfMarz",), SUPPRESSOR_ALWAYS + ["ShotgunSuppressorB42GoM"]),
+    (("MarzGuns",), SUPPRESSOR_ALWAYS + ["ShotgunSuppressorB42GoMOld"]),
+    (("VFExpansionReduxb42",), SUPPRESSOR_ALWAYS + ["ShotgunSuppressorB42VFE"]),
+    (("VFExpansion3Reduxb42",), SUPPRESSOR_ALWAYS + ["ShotgunSuppressorB42VFE"]),
+    (("MarzVanillaGuns", "VFExpansion2Reduxb42"), SUPPRESSOR_ALWAYS + [
+        "ShotgunSuppressorB42VWP", "ShotgunSuppressorB42VFE",
+    ]),
+])
+def test_suppressor_selection_uses_verified_independent_weapon_mod_triggers(triggers, expected):
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    records = suppressor_records(*triggers)
+    selected, decisions, _pairs, _replacements = select(
+        generator, records, generator.MOD_SELECTION_RULES,
+    )
+
+    suppressors = [mod_id for mod_id in selected if mod_id in SUPPRESSOR_MOD_IDS]
+    assert suppressors == expected
+    assert selected == select(generator, records, generator.MOD_SELECTION_RULES)[0]
+    assert len(selected) == len(set(selected))
+    if triggers:
+        results = decisions[0]["condition_results"]
+        assert any(result["applied"] for result in results)
+    else:
+        assert all(not result["applied"] for result in decisions[0]["condition_results"])
+
+
+def test_suppressor_selection_keeps_both_profiles_when_both_gom_versions_are_really_active():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    records = suppressor_records("GunsOfMarz", "MarzGuns")
+    selected, _decisions, _pairs, _replacements = select(
+        generator, records, generator.MOD_SELECTION_RULES,
+    )
+    assert "ShotgunSuppressorB42GoM" in selected
+    assert "ShotgunSuppressorB42GoMOld" in selected
+    resolved, _decisions, conflicts = generator.resolve_mod_rules(
+        selected, generator.load_mod_rules(ROOT / "mod-rules.toml"),
+    )
+    assert resolved == selected
+    assert conflicts == [{
+        "mods": ["ShotgunSuppressorB42GoM", "ShotgunSuppressorB42GoMOld"],
+        "reason": (
+            "Both Guns of Marz suppressor profiles were selected; retain both only when both "
+            "corresponding Guns of Marz Mod IDs are genuinely active."
+        ),
+    }]
+
+
+def test_suppressor_load_order_keeps_core_before_companions_and_weapon_packs_before_extensions():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    selected, _decisions, _pairs, _replacements = select(
+        generator,
+        suppressor_records(
+            "SWMG", "MarzVanillaGuns", "GunsOfMarz", "MarzGuns",
+            "VFExpansionReduxb42", "VFExpansion2Reduxb42",
+        ),
+        generator.MOD_SELECTION_RULES,
+    )
+    ordered = generator.reorder_mod_ids(selected)
+    core = "ShotgunSuppressorB42"
+    for companion in SUPPRESSOR_MOD_IDS[1:]:
+        assert ordered.index(core) < ordered.index(companion)
+    assert ordered.index("MarzVanillaGuns") < ordered.index("ShotgunSuppressorB42VWP")
+    assert ordered.index("GunsOfMarz") < ordered.index("ShotgunSuppressorB42GoM")
+    assert ordered.index("MarzGuns") < ordered.index("ShotgunSuppressorB42GoMOld")
+    assert ordered.index("VFExpansionReduxb42") < ordered.index("ShotgunSuppressorB42VFE")
+    assert ordered.index("VFExpansion2Reduxb42") < ordered.index("ShotgunSuppressorB42VFE")
+
+
 def test_selection_validation_and_phase_one_order_follow_selection():
     generator = load_path_module(ROOT / "generate-mod-list.py")
     with pytest.raises(generator.ModSelectionError, match="selects and deselects"):

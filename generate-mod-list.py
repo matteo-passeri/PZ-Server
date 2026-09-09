@@ -138,6 +138,20 @@ MOD_LOAD_BEFORE = [
     ("CompanionDogs", "CompanionDogsRottweiler"),
     ("CompanionDogs", "CompanionDogsDoberman"),
     ("AMMS_Standalone", "errorMagnifier"),
+    ("ShotgunSuppressorB42", "ShotgunSuppressorB42Vanilla"),
+    ("ShotgunSuppressorB42", "ShotgunSuppressorB42GoM"),
+    ("ShotgunSuppressorB42", "ShotgunSuppressorB42GoMOld"),
+    ("ShotgunSuppressorB42", "ShotgunSuppressorB42VWP"),
+    ("ShotgunSuppressorB42", "ShotgunSuppressorB42VFE"),
+    ("MarzVanillaGuns", "ShotgunSuppressorB42VWP"),
+    ("SWMG", "ShotgunSuppressorB42VWP"),
+    ("GunsOfMarz", "ShotgunSuppressorB42GoM"),
+    ("MarzGuns", "ShotgunSuppressorB42GoMOld"),
+    ("SWMG", "ShotgunSuppressorB42GoM"),
+    ("SWMG", "ShotgunSuppressorB42GoMOld"),
+    ("VFExpansionReduxb42", "ShotgunSuppressorB42VFE"),
+    ("VFExpansion2Reduxb42", "ShotgunSuppressorB42VFE"),
+    ("VFExpansion3Reduxb42", "ShotgunSuppressorB42VFE"),
 ]
 MOD_LOAD_AFTER = [
     ("SWMG", "HBVCEFb42"),
@@ -205,6 +219,36 @@ MOD_SELECTION_RULES: dict[str, dict[str, Any]] = {
         "mod_ids": ["UltimateTowing", "UltimateTowingZB"],
         "default": ["UltimateTowing"],
         "exclusive_groups": [["UltimateTowing", "UltimateTowingZB"]],
+    },
+    "3795071786": {
+        "mod_ids": [
+            "ShotgunSuppressorB42",
+            "ShotgunSuppressorB42Vanilla",
+            "ShotgunSuppressorB42GoM",
+            "ShotgunSuppressorB42GoMOld",
+            "ShotgunSuppressorB42VWP",
+            "ShotgunSuppressorB42VFE",
+        ],
+        "default": ["ShotgunSuppressorB42", "ShotgunSuppressorB42Vanilla"],
+        "optional": [
+            "ShotgunSuppressorB42GoM",
+            "ShotgunSuppressorB42GoMOld",
+            "ShotgunSuppressorB42VWP",
+            "ShotgunSuppressorB42VFE",
+        ],
+        "conditions": [
+            {"any_of": ["MarzVanillaGuns"], "select": ["ShotgunSuppressorB42VWP"]},
+            {"any_of": ["GunsOfMarz"], "select": ["ShotgunSuppressorB42GoM"]},
+            {"any_of": ["MarzGuns"], "select": ["ShotgunSuppressorB42GoMOld"]},
+            {
+                "any_of": [
+                    "VFExpansionReduxb42",
+                    "VFExpansion2Reduxb42",
+                    "VFExpansion3Reduxb42",
+                ],
+                "select": ["ShotgunSuppressorB42VFE"],
+            },
+        ],
     },
 }
 
@@ -1573,11 +1617,23 @@ def validate_mod_selection_rules(rules: dict[str, dict[str, Any]] = MOD_SELECTIO
         if not isinstance(conditions, list):
             raise ModSelectionError(f"{context}.conditions must be a list")
         for index, condition in enumerate(conditions, 1):
-            if not isinstance(condition, dict) or set(condition) - {"if_active", "select", "deselect"}:
+            if not isinstance(condition, dict) or set(condition) - {"if_active", "any_of", "select", "deselect"}:
                 raise ModSelectionError(f"{context}.conditions[{index}] is malformed")
-            required = _selection_ids(condition.get("if_active"), context + f".conditions[{index}].if_active")
-            select = _selection_ids(condition.get("select"), context + f".conditions[{index}].select")
-            deselect = _selection_ids(condition.get("deselect"), context + f".conditions[{index}].deselect")
+            trigger_keys = [key for key in ("if_active", "any_of") if key in condition]
+            if len(trigger_keys) != 1:
+                raise ModSelectionError(
+                    f"{context}.conditions[{index}] requires exactly one of if_active or any_of"
+                )
+            trigger_key = trigger_keys[0]
+            _selection_ids(condition[trigger_key], context + f".conditions[{index}].{trigger_key}")
+            select = condition.get("select", [])
+            deselect = condition.get("deselect", [])
+            if not isinstance(select, list) or not isinstance(deselect, list) or not (select or deselect):
+                raise ModSelectionError(f"{context}.conditions[{index}] requires select and/or deselect Mod IDs")
+            if select:
+                _selection_ids(select, context + f".conditions[{index}].select")
+            if deselect:
+                _selection_ids(deselect, context + f".conditions[{index}].deselect")
             if set(select) & set(deselect):
                 raise ModSelectionError(f"{context}.conditions[{index}] selects and deselects the same Mod ID")
             if not set(select + deselect) <= declared:
@@ -1666,10 +1722,22 @@ def resolve_mod_selection(
             eligible = [mod_id for mod_id in discovered if mod_id in declared and mod_id not in admin_blacklist]
             chosen = [mod_id for mod_id in rule.get("default", []) if mod_id in eligible]
             reason = "curated_default"
+            condition_results: list[dict[str, Any]] = []
             for condition in rule.get("conditions", []):
-                if set(condition["if_active"]) <= baseline:
-                    chosen = [mod_id for mod_id in chosen if mod_id not in condition["deselect"]]
-                    chosen.extend(mod_id for mod_id in condition["select"] if mod_id in eligible and mod_id not in chosen)
+                trigger_key = "if_active" if "if_active" in condition else "any_of"
+                triggers = condition[trigger_key]
+                matches = [mod_id for mod_id in triggers if mod_id in baseline]
+                applies = set(triggers) <= baseline if trigger_key == "if_active" else bool(matches)
+                condition_results.append({
+                    "trigger_mode": trigger_key,
+                    "triggers": triggers,
+                    "matched": matches,
+                    "selected": condition.get("select", []),
+                    "applied": applies,
+                })
+                if applies:
+                    chosen = [mod_id for mod_id in chosen if mod_id not in condition.get("deselect", [])]
+                    chosen.extend(mod_id for mod_id in condition.get("select", []) if mod_id in eligible and mod_id not in chosen)
                     reason = "curated_condition"
             for group in rule.get("exclusive_groups", []):
                 group_selected = [mod_id for mod_id in chosen if mod_id in group]
@@ -1705,7 +1773,10 @@ def resolve_mod_selection(
                     chosen = [mod_id for mod_id in chosen if mod_id not in {base, removed}]
                     chosen.append(retained)
             chosen = reconcile_removed_pair_blacklist(chosen, pairs, admin_blacklist)
-            decisions.append({"workshop_id": workshop_id, "selected": chosen, "rejected": [m for m in discovered if m not in chosen], "reason": reason})
+            decision = {"workshop_id": workshop_id, "selected": chosen, "rejected": [m for m in discovered if m not in chosen], "reason": reason}
+            if condition_results:
+                decision["condition_results"] = condition_results
+            decisions.append(decision)
         elif pairs:
             bases = {pair["base_mod_id"] for pair in pairs}
             safe = [mod_id for mod_id in discovered if mod_id not in removed_ids]
@@ -2681,6 +2752,16 @@ def main() -> int:
             f"  selected: {', '.join(item['selected']) or 'None'}\n"
             f"  skipped: {', '.join(item['rejected']) or 'None'}\n"
             f"  reason: {item['reason']}"
+            + "".join(
+                "\n  conditional "
+                f"{result['trigger_mode']} ({', '.join(result['triggers'])}): "
+                + (
+                    f"enabled {', '.join(result['selected'])} because {', '.join(result['matched'])} is present"
+                    if result['applied'] else
+                    f"omitted {', '.join(result['selected'])} because no matching Mod ID is present"
+                )
+                for result in item.get("condition_results", [])
+            )
             for item in mod_selection_decisions
         ],
     )

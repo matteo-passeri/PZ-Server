@@ -221,6 +221,24 @@ defaults, optional add-ons, mutually exclusive variants, conditional variants,
 and known Removed replacements. It is deliberately separate from the curated
 load-order lists and from `mod-rules.toml` compatibility rules.
 
+Conditional companions use a rule-local `conditions` entry. `if_active`
+requires every listed resolved Mod ID; `any_of` enables a dependent companion
+when at least one listed resolved Mod ID is active. The selection baseline is
+constructed before any item conditions are evaluated, so collection order does
+not affect the result. For example, an optional compatibility module can be
+enabled only when its related weapon module exists:
+
+```python
+"conditions": [{
+    "any_of": ["RelatedWeaponMod"],
+    "select": ["DependentCompatibilityMod"],
+}]
+```
+
+Conditions may also use `deselect` when a matching trigger must replace a
+default. The generated report records each conditional module as enabled with
+the matching Mod ID or omitted because no trigger was active.
+
 Administrator choices still take precedence: `PZ_MOD_ID_OVERRIDES` and
 `PZ_MOD_FORCED_MODS` can select a valid variant or optional add-on, while a
 blacklist prevents a curated or derived default from being re-added. Requesting

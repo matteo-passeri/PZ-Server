@@ -1,5 +1,10 @@
 # Shared Project Zomboid Mod-ID compatibility policy.
 # Server administrators keep their local choices in .env instead.
+# Per-Workshop default/optional selection (including a companion enabled only
+# when a related Mod ID is active) belongs in MOD_SELECTION_RULES in
+# generate-mod-list.py; see README's "Workshop Mod ID selection" section.
+# Example: "conditions": [{"any_of": ["RelatedWeaponMod"],
+# "select": ["DependentCompatibilityMod"]}]
 
 [mods]
 # Known obsolete/alternative IDs from this deployment's supported mod set.
@@ -42,6 +47,10 @@ losers = ["Navigator"]
 reason = "Minidoracat AutoDrive declares Navigator incompatible; AutoDrive takes precedence when both are present."
 
 # Add [[mods.conflict]] rules for incompatibilities without a universal winner.
+
+[[mods.conflict]]
+mods = ["ShotgunSuppressorB42GoM", "ShotgunSuppressorB42GoMOld"]
+reason = "Both Guns of Marz suppressor profiles were selected; retain both only when both corresponding Guns of Marz Mod IDs are genuinely active."
 
 [workshop]
 # Reserved for future project-wide Workshop-ID rules. Mod-ID rules above do not
