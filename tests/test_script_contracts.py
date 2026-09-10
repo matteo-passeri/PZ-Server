@@ -27,6 +27,7 @@ PATH_MODULES = (
     "fix-scripts/40-radarchery-bob-glb-channels.py",
     "fix-scripts/41-nearby-animals-b42-20.py",
     "fix-scripts/42-more-damaged-objects-b42-20.py",
+    "fix-scripts/44-lugli-achievements-b42-20-weapon-categories.py",
     "fix-scripts/60-door-unlock-from-inside-force-locked-v2.py",
     "fix-scripts/_vehicle_compat.py",
 )
