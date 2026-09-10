@@ -195,9 +195,17 @@ MOD_SELECTION_RULES: dict[str, dict[str, Any]] = {
         "default": ["76chevyKseries", "76chevyKserieseExpanded"],
     },
     "3610677934": {
-        "mod_ids": ["HBVCEFb42", "HBTacReload", "zHBVCEF"],
-        "default": ["HBVCEFb42"],
+        "mod_ids": ["HBVCEFb42", "HBAmmoCraft", "HBTacReload", "zHBVCEF"],
+        "default": ["HBVCEFb42", "HBAmmoCraft"],
         "optional": ["HBTacReload", "zHBVCEF"],
+    },
+    "3637364024": {
+        "mod_ids": ["HBAC"],
+        "default": ["HBAC"],
+        "conditions": [{
+            "if_active": ["HBAmmoCraft"],
+            "deselect": ["HBAC"],
+        }],
     },
     "3629835761": {
         "mod_ids": ["Ladders42131", "Ladders4220", "Ladders42204"],
@@ -1824,6 +1832,20 @@ def resolve_mod_selection(
     return selected, decisions, auto_pairs, replacements
 
 
+def filter_unused_selected_workshops(
+    workshop_ids: list[str], decisions: list[dict[str, Any]],
+) -> list[str]:
+    """Drop curated Workshop items whose selection intentionally chose no IDs."""
+    selected_by_workshop = {
+        decision["workshop_id"]: decision["selected"]
+        for decision in decisions
+    }
+    return [
+        workshop_id for workshop_id in workshop_ids
+        if workshop_id not in selected_by_workshop or selected_by_workshop[workshop_id]
+    ]
+
+
 def suspicious_build(
     title: str,
     description: str,
@@ -2405,6 +2427,10 @@ def main() -> int:
         record["mod_ids"] = list(dict.fromkeys(
             selected_by_workshop[record["workshop_id"]]
         ))
+    workshop_ids = filter_unused_selected_workshops(
+        workshop_ids,
+        mod_selection_decisions,
+    )
 
     # The legacy discovery pass must not leave stale unresolved/ownership
     # diagnostics after Phase 2 selected a safe subset for the item.

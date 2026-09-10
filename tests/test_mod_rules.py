@@ -637,7 +637,7 @@ def test_lg_extended_electricity_curated_default_keeps_power_usage_optional():
 @pytest.mark.parametrize(("workshop_id", "discovered", "expected"), [
     ("3775549570", ["alicesWeaponSling", "alicesWeaponSlingRadialMenu"], ["alicesWeaponSling"]),
     ("2940354599", ["FWOFitnessWorkoutOverhaul", "FWOBenchPressTreadmill"], ["FWOFitnessWorkoutOverhaul"]),
-    ("3610677934", ["HBVCEFb42", "HBTacReload", "zHBVCEF"], ["HBVCEFb42"]),
+    ("3610677934", ["HBVCEFb42", "HBAmmoCraft", "HBTacReload", "zHBVCEF"], ["HBVCEFb42", "HBAmmoCraft"]),
 ])
 def test_curated_optional_addons_remain_disabled_by_default(workshop_id, discovered, expected):
     generator = load_path_module(ROOT / "generate-mod-list.py")
@@ -647,6 +647,47 @@ def test_curated_optional_addons_remain_disabled_by_default(workshop_id, discove
     assert selected == expected
     assert decisions[0]["reason"] == "curated_default"
     assert decisions[0]["rejected"] == [mod_id for mod_id in discovered if mod_id not in expected]
+
+
+def test_hot_brass_modern_ammo_crafting_replaces_deprecated_hbac():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    modern_workshop = "3610677934"
+    deprecated_workshop = "3637364024"
+    records = [
+        selection_record(
+            modern_workshop,
+            ["HBVCEFb42", "HBAmmoCraft", "HBTacReload", "zHBVCEF"],
+        ),
+        selection_record(deprecated_workshop, ["HBAC"]),
+    ]
+
+    selected, decisions, _pairs, _replacements = select(
+        generator, records, generator.MOD_SELECTION_RULES,
+    )
+
+    assert selected == ["HBVCEFb42", "HBAmmoCraft"]
+    assert "HBAC" not in selected
+    assert decisions[0]["selected"] == ["HBVCEFb42", "HBAmmoCraft"]
+    assert decisions[0]["rejected"] == ["HBTacReload", "zHBVCEF"]
+    assert decisions[1]["selected"] == []
+    assert decisions[1]["rejected"] == ["HBAC"]
+    assert generator.filter_unused_selected_workshops(
+        [modern_workshop, deprecated_workshop], decisions,
+    ) == [modern_workshop]
+
+
+def test_hot_brass_deprecated_ammo_crafting_remains_fallback_without_modern_workshop():
+    generator = load_path_module(ROOT / "generate-mod-list.py")
+    workshop_id = "3637364024"
+    selected, decisions, _pairs, _replacements = select(
+        generator,
+        [selection_record(workshop_id, ["HBAC"])],
+        generator.MOD_SELECTION_RULES,
+    )
+
+    assert selected == ["HBAC"]
+    assert decisions[0]["selected"] == ["HBAC"]
+    assert generator.filter_unused_selected_workshops([workshop_id], decisions) == [workshop_id]
 
 
 def test_ladders_curated_default_excludes_legacy_variants():
