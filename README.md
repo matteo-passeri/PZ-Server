@@ -293,7 +293,9 @@ not depend on personal development checkouts or separate source mounts. Each
 compatibility fix is guarded, best-effort, and idempotent:
 a missing target, unnecessary or already-applied repair, unknown revision, or
 unrecognized upstream change is a successful skip and must not block server
-startup or update. Unexpected script, framework, and I/O failures remain errors.
+startup or update. They are reapplied after Workshop refreshes only when the
+downloaded content still matches the guarded vulnerable state. Unexpected
+script, framework, and I/O failures remain errors.
 
 Audit the latest Project Zomboid server DebugLog, or a specific saved log:
 
@@ -305,6 +307,12 @@ Audit the latest Project Zomboid server DebugLog, or a specific saved log:
 Reports are written under the ignored `reports/` directory. Runtime audits are
 manual. A separate host-side systemd service runs one startup audit after the
 server writes its SERVER STARTED marker, then exits.
+
+Audit reports preserve raw ERROR/WARN/Exception totals. They separately
+summarize only conservative, exact B42 validation-noise signatures; those lines
+are not deleted and do not increase the actionable classified-event count.
+Generic warnings outside those signatures, including `ModelScript.check`
+missing-model warnings, remain actionable.
 
 The patcher loads root-level `fix-scripts/*.py` alphabetically. It returns `0`
 when no file changed, `10` when it changed files, `1` for an error, and `130`

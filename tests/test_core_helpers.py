@@ -9,15 +9,15 @@ from conftest import ROOT, load_path_module
 def test_audit_filters_optional_probe_blocks_and_keeps_real_animation(tmp_path):
     audit = load_path_module(ROOT / "audit-server-log.py")
     base = "/home/steam/steamapps/workshop/content/108600/123/mods/Vehicle Repair Overhaul"
-    optional = f"java.nio.file.NoSuchFileException: {base}/common/media/AnimSets at UnixException.translateToIOException(null:-1)."
+    optional = "ERROR: AdvancedAnimator$1.visitFileFailed > Exception thrown"
     frames = [
+        f"java.nio.file.NoSuchFileException: {base}/common/media/AnimSets",
         "    at zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator.searchFolders(AdvancedAnimator.java:1)",
-        "    at zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator.load(AdvancedAnimator.java:2)",
-        "java.base/sun.nio.fs.UnixException.rethrowAsIOException(UnixException.java:111)",
-        "  at java.base/sun.nio.fs.UnixException.translateToIOException(UnixException.java:92)",
+        "    at zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator.loadModMedia(AdvancedAnimator.java:2)",
+        "    at zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator.collectModFiles(AdvancedAnimator.java:3)",
     ]
-    analysis = audit.analyze_optional_probe_blocks([optional, *frames], 0, 5)
-    assert len(analysis.details) == 1
+    analysis = audit.analyze_known_noise([optional, *frames], 0, 5)
+    assert len(analysis.events) == 1
     assert analysis.suppressed_line_indexes == {0, 1, 2, 3, 4}
     assert audit.find_events([optional, *frames], 0, 5) == []
     assert audit.classify(frames[2]) is None
@@ -32,15 +32,16 @@ def test_audit_report_uses_filtered_events_for_common_errors(tmp_path):
     audit = load_path_module(ROOT / "audit-server-log.py")
     source = tmp_path / "DebugLog-server.txt"
     source.write_text("fixture\n", encoding="utf-8")
-    probe = "java.nio.file.NoSuchFileException: /x/steamapps/workshop/content/108600/123/mods/Foo/common/media/actiongroups at UnixException.translateToIOException(null:-1)."
+    probe = "ERROR: AdvancedAnimator$1.visitFileFailed > Exception thrown"
     frames = [
-        "java.base/sun.nio.fs.UnixException.rethrowAsIOException(UnixException.java:111)",
-        "at java.base/sun.nio.fs.UnixException.translateToIOException(UnixException.java:92)",
+        "java.nio.file.NoSuchFileException: /x/steamapps/workshop/content/108600/123/mods/Foo/common/media/actiongroups",
+        "at zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator.searchFolders(AdvancedAnimator.java:1)",
+        "at zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator.loadModMedia(AdvancedAnimator.java:2)",
+        "at zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator.collectModFiles(AdvancedAnimator.java:3)",
     ]
-    report = audit.format_report(source, [probe, *frames], "startup", 0, 3, None)
-    assert "Suppressed optional animation directory probes: 1" in report
-    assert "UnixException.rethrowAsIOException" not in report
-    assert "UnixException.translateToIOException" not in report
+    report = audit.format_report(source, [probe, *frames], "startup", 0, 5, None)
+    assert "AdvancedAnimator optional-directory probes: 1" in report
+    assert "NoSuchFileException" not in report
     assert "Most common errors\nNone." in report
 
 

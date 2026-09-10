@@ -41,6 +41,35 @@ OPTIONAL_ANIMATION_PROBE_RE = re.compile(
     r"(?P<directory>AnimSets|actiongroups)$",
     flags=re.I,
 )
+MODEL_SCRIPT_FILE_SUBMESH_RE = re.compile(
+    r"WARN\s*:\s*Script.*ModelScript\.checkMesh.*no such mesh\s+\"[^\"\r\n]*\|[^\"\r\n]*\"\s+for\s+\S+",
+    flags=re.I,
+)
+BROKEN_FENCES_THUMP_RE = re.compile(
+    r"ERROR\s*:\s*Sound.*BrokenFences\.addBrokenTiles.*Missing ThumpSound "
+    r"for breakable object\s+\S+\.",
+    flags=re.I,
+)
+MOVEABLE_VALIDATION_RE = re.compile(
+    r"WARN\s*:\s*Moveable.*Moveable\.ReadFromWorldSprite.*Warning: "
+    r"Moveable not valid for\s+\S+\.",
+    flags=re.I,
+)
+XUI_ICON_RE = re.compile(
+    r"XuiSkin\$EntityUiStyle\.(?:Load|LoadComponentInfo).*Could not find icon:\s*\S+",
+    flags=re.I,
+)
+TILE_ALIAS_PROPERTIES = frozenset((
+    "IsVerticalPipe", "ladderW", "ladderS", "ladderE", "ladderN",
+    "FlatTextureOffset", "IsDrainPipe", "TunaRackPiece", "TunaERPiece",
+    "IsGutterPipe", "WindowShape",
+))
+TILE_ALIAS_STACK = (
+    "IsoPropertyType.lookup", "IsoPropertyType.lookupOrDefaultStr",
+    "TilePropertyAliasMap.register", "TilePropertyAliasMap.Generate",
+    "IsoWorld.GenerateTilePropertyLookupTables",
+)
+KNOWN_MAP_META_IDS = frozenset(("231", "327914", "327911", "655594"))
 
 CRITICAL_PATTERNS = (
     "nullpointerexception", "kahluaexception", "outofmemoryerror",
@@ -86,6 +115,19 @@ class Event:
 @dataclass
 class OptionalProbeAnalysis:
     details: list[tuple[str, str, str]]
+    suppressed_line_indexes: set[int]
+
+
+@dataclass(frozen=True)
+class KnownNoiseEvent:
+    family: str
+    line_number: int
+    detail: str
+
+
+@dataclass
+class KnownNoiseAnalysis:
+    events: list[KnownNoiseEvent]
     suppressed_line_indexes: set[int]
 
 
@@ -171,23 +213,106 @@ def analyze_optional_probe_blocks(
     start: int,
     end: int,
 ) -> OptionalProbeAnalysis:
-    """Find optional probe exceptions and their immediately attached frames."""
+    """Find complete AdvancedAnimator optional-probe blocks for compatibility."""
     details = []
     suppressed_line_indexes = set()
 
     for index in range(start, end):
-        details_for_line = optional_animation_probe_details(lines[index])
-        if details_for_line is None:
+        block = advanced_animator_probe_block(lines, index, end)
+        if block is None:
             continue
-
+        details_for_line, indexes = block
         details.append(details_for_line)
-        suppressed_line_indexes.add(index)
-        continuation = index + 1
-        while continuation < end and is_java_stack_continuation(lines[continuation]):
-            suppressed_line_indexes.add(continuation)
-            continuation += 1
+        suppressed_line_indexes.update(indexes)
 
     return OptionalProbeAnalysis(details, suppressed_line_indexes)
+
+
+def advanced_animator_probe_block(lines, index, end):
+    """Return the precise optional-directory probe block rooted at ``index``."""
+    if not re.search(r"AdvancedAnimator\$1\.visitFileFailed\s*>\s*Exception thrown", lines[index], re.I):
+        return None
+    limit = min(end, index + 16)
+    exception_index = None
+    details = None
+    for candidate in range(index + 1, limit):
+        details = optional_animation_probe_details(lines[candidate])
+        if details is not None:
+            exception_index = candidate
+            break
+        if candidate > index + 1 and "AdvancedAnimator$1.visitFileFailed" in lines[candidate]:
+            break
+    if exception_index is None:
+        return None
+    block = "\n".join(lines[index:limit])
+    if not all(frame in block for frame in (
+        "AdvancedAnimator.searchFolders", "AdvancedAnimator.loadModMedia",
+        "AdvancedAnimator.collectModFiles",
+    )):
+        return None
+    indexes = set(range(index, exception_index + 1))
+    continuation = exception_index + 1
+    while continuation < end and is_java_stack_continuation(lines[continuation]):
+        indexes.add(continuation)
+        continuation += 1
+    return details, indexes
+
+
+def is_known_map_metagrid_noise(line):
+    lowered = line.casefold()
+    if re.search(r"invalid room metaid #(?P<id>\d+) in cell 25,33 while reading map_meta\.bin", line, re.I):
+        match = re.search(r"invalid room metaid #(?P<id>\d+)", line, re.I)
+        return match is not None and match.group("id") in KNOWN_MAP_META_IDS
+    return (
+        "duplicate roomdef.metaid for room at 10707,9484,0" in lowered
+    )
+
+
+def analyze_known_noise(lines: list[str], start: int, end: int) -> KnownNoiseAnalysis:
+    """Recognize only investigated B42 validation paths and preserve raw lines."""
+    events = []
+    suppressed = set()
+    for index in range(start, end):
+        if index in suppressed:
+            continue
+        advanced = advanced_animator_probe_block(lines, index, end)
+        if advanced is not None:
+            details, indexes = advanced
+            events.append(KnownNoiseEvent("AdvancedAnimator optional-directory probes", index + 1, details[1]))
+            suppressed.update(indexes)
+            continue
+
+        line = lines[index]
+        family = None
+        if MODEL_SCRIPT_FILE_SUBMESH_RE.search(line):
+            family = "ModelScript file|submesh validation"
+        elif BROKEN_FENCES_THUMP_RE.search(line):
+            family = "BrokenFences ThumpSound"
+        elif MOVEABLE_VALIDATION_RE.search(line):
+            family = "Moveable validation"
+        elif XUI_ICON_RE.search(line):
+            family = "XUI missing-icon resolution"
+        elif is_known_map_metagrid_noise(line):
+            family = "Known map/metagrid issues"
+        else:
+            window = "\n".join(lines[index:min(end, index + 16)])
+            if ("mannequin zone missing properties in media/maps/muldraugh, ky/objects.lua" in line.casefold()
+                and "coords: 13583,1299,0" in window.casefold()):
+                family = "Known map/metagrid issues"
+            elif (
+                any(property_name.casefold() in window.casefold() for property_name in TILE_ALIAS_PROPERTIES)
+                and all(frame in window for frame in TILE_ALIAS_STACK)
+                and "IsoPropertyType.lookup" in line
+            ):
+                family = "Tile-property alias generation"
+                # These are a single validator event followed by its stack.
+                for continuation in range(index + 1, min(end, index + 16)):
+                    if any(frame in lines[continuation] for frame in TILE_ALIAS_STACK):
+                        suppressed.add(continuation)
+        if family is not None:
+            events.append(KnownNoiseEvent(family, index + 1, line.strip()))
+            suppressed.add(index)
+    return KnownNoiseAnalysis(events, suppressed)
 
 
 def read_env(path: Path) -> dict[str, str]:
@@ -248,11 +373,7 @@ def find_events(
     suppressed_line_indexes: set[int] | None = None,
 ) -> list[Event]:
     if suppressed_line_indexes is None:
-        suppressed_line_indexes = analyze_optional_probe_blocks(
-            lines,
-            start,
-            end,
-        ).suppressed_line_indexes
+        suppressed_line_indexes = analyze_known_noise(lines, start, end).suppressed_line_indexes
 
     events = []
     for index in range(start, end):
@@ -326,18 +447,13 @@ def format_report(
     all_counts = counts(lines)
     phase_lines = lines[phase_start:phase_end]
     phase_counts = counts(phase_lines)
-    optional_probe_analysis = analyze_optional_probe_blocks(
-        lines,
-        phase_start,
-        phase_end,
-    )
+    known_noise_analysis = analyze_known_noise(lines, phase_start, phase_end)
     events = find_events(
         lines,
         phase_start,
         phase_end,
-        optional_probe_analysis.suppressed_line_indexes,
+        known_noise_analysis.suppressed_line_indexes,
     )
-    probe_details = optional_probe_analysis.details
     world_dictionary_mods = find_world_dictionary_removed_mods(lines, phase_start, phase_end)
     removed_fallbacks = removed_fallbacks or {}
     header = [
@@ -367,18 +483,14 @@ def format_report(
     if phase == "runtime" and not serious:
         body.extend(["No serious runtime errors detected after server startup.", ""])
 
-    body.extend([
-        "OPTIONAL LOADER PROBES",
-        f"Suppressed optional animation directory probes: {len(probe_details)}",
-        f"Unique paths: {len({path for _, path, _ in probe_details})}",
-    ])
-    if probe_details:
-        by_directory = Counter(directory.casefold() for directory, _, _ in probe_details)
-        body.extend([
-            f"AnimSets: {by_directory['animsets']}",
-            f"actiongroups: {by_directory['actiongroups']}",
-            f"Workshop IDs: {len({workshop_id for _, _, workshop_id in probe_details})}",
-        ])
+    body.append("KNOWN B42 / VALIDATION NOISE")
+    known_by_family = Counter(event.family for event in known_noise_analysis.events)
+    if not known_by_family:
+        body.append("None.")
+    for family, count in sorted(known_by_family.items()):
+        body.append(f"{family}: {count}")
+        representative = next(event for event in known_noise_analysis.events if event.family == family)
+        body.append(f"  Example near line {representative.line_number}: {representative.detail}")
     body.append("")
 
     body.append(f"WORLD DICTIONARY REMOVED MOD ({len(world_dictionary_mods)})")
