@@ -53,6 +53,7 @@ services:
       - ${PZ_DEDICATED_SERVER_DIR}:/home/steam/zomboid
       - ${PZ_ZOMBOID_DATA_DIR}:/home/steam/zomboid_data
       - ${PZ_ENTRYPOINT_FILE}:/home/steam/entrypoint.sh:ro
+      - ./config_editor.py:/home/steam/config_editor.py:ro
 
     ports:
       - "16261:16261/udp"
