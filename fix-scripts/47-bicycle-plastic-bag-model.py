@@ -7,7 +7,7 @@ import tempfile
 
 
 WORKSHOP_ID = "3461415167"
-MOD_ID = "Bicycle"
+MOD_ID = "BicycleMod"
 MOD_DIRECTORY = "Bicycle"
 SCRIPT_RELATIVE = Path("42.20/media/scripts/Bicycle_item.txt")
 BAD_VALUE = "Plasticbag"
@@ -110,7 +110,7 @@ def run(ctx):
         log("Bicycle plastic-bag model: Workshop 3461415167 is not active; skip.")
         return False
     if active_mod_ids and MOD_ID not in active_mod_ids:
-        log("Bicycle plastic-bag model: Mod Bicycle is not active; skip.")
+        log("Bicycle plastic-bag model: Mod BicycleMod is not active; skip.")
         return False
     mod_root = resolve_mod_root(ctx["WORKSHOP"])
     if mod_root is None:

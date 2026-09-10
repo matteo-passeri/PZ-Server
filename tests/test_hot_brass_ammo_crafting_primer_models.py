@@ -20,7 +20,7 @@ def write_fixture(workshop, module, items):
 
 def vulnerable_items():
     primers = "\n".join(
-        f"item {primer}\n{{\n    StaticModel = HBVCEF.{primer},\n"
+        f"item {primer} {{\n    StaticModel = HBVCEF.{primer},\n"
         f"    WorldStaticModel = HBVCEF.{primer},\n}}"
         for primer in ("Primer_Rifle", "Primer_Pistol", "Primer_Shotshell")
     )

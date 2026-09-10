@@ -65,13 +65,13 @@ def resolve_mod_root(workshop):
 
 
 def item_block(text, item_name):
-    header = re.compile(rf"(?m)^[ \t]*item[ \t]+{re.escape(item_name)}[ \t]*(?:\r?\n|$)")
+    header = re.compile(
+        rf"(?m)^[ \t]*item[ \t]+{re.escape(item_name)}[ \t]*\{{"
+    )
     matches = list(header.finditer(text))
     if len(matches) != 1:
         raise UpstreamChangedError(f"{item_name}: expected one item block; found {len(matches)}")
-    opener = text.find("{", matches[0].end())
-    if opener == -1:
-        raise UpstreamChangedError(f"{item_name}: item block has no opening brace")
+    opener = matches[0].end() - 1
     depth = 0
     for index in range(opener, len(text)):
         if text[index] == "{":
